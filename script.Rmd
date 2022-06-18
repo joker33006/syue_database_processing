@@ -1,0 +1,33 @@
+---
+title: "雪霸數化資料與資料庫整理"
+output: html_notebook
+---
+# 概述
+本篇主要目的是統整各個數化檔案資料，並將數化結果加以整理。 
+## step 0. Loading Packages
+```{r}
+library(data.table)
+library(ggplot2)
+library(readxl)
+```
+setting up the working dir
+```{r}
+path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/期中報告/"
+```
+## Step 1. 讀取數化資料並整合
+讀取各個資料夾中的檔案，最後整併成一個工作表
+
+```{r}
+fn <- list.files(paste0(path,"/rawdata/哺乳類與鳥類"))
+dt <- lapply(fn,function(x){
+  t <-try({
+      read_xlsx(paste0(path,"rawdata/哺乳類與鳥類/",x,"/",x,".xlsx"))
+      })
+  return(t)
+  })
+lost_list <- Filter(is.character,dt)
+lost_tb <- data.table(name=unlist(lost_list))
+lost_tb[,name:=gsub("Error : `path` does not exist: ‘H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/期中報告/rawdata/哺乳類與鳥類/",'',name)]
+write.csv(lost_tb,paste0(path,"lostdata.csv"))
+```
+

@@ -18,16 +18,36 @@ path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/期中報告/"
 讀取各個資料夾中的檔案，最後整併成一個工作表
 
 ```{r}
-fn <- list.files(paste0(path,"/rawdata/哺乳類與鳥類"))
+fn <- list.files("E:/雪霸報告統整/哺乳類與鳥類")
 dt <- lapply(fn,function(x){
-  t <-try({
-      read_xlsx(paste0(path,"rawdata/哺乳類與鳥類/",x,"/",x,".xlsx"))
-      })
+  furl <- paste0("E:/雪霸報告統整/哺乳類與鳥類/",x,"/",x,".xlsx")
+  t <-try(read_xlsx(furl,1))
   return(t)
   })
-lost_list <- Filter(is.character,dt)
-lost_tb <- data.table(name=unlist(lost_list))
-lost_tb[,name:=gsub("Error : `path` does not exist: ‘H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/期中報告/rawdata/哺乳類與鳥類/",'',name)]
-write.csv(lost_tb,paste0(path,"lostdata.csv"))
+dt[[16]] <- read_xlsx("E:/雪霸報告統整/哺乳類與鳥類/8302-1_雪霸國家公園觀霧地區步道沿線動物資源、植群及其景觀之調查研究—動物資源部分/8302-1_雪霸國家公園觀霧地區步道沿線動物資源、植群及其景觀之調查研究—動物資源部分.xlsx")
+
+dt <- lapply(dt,as.data.table)
+dt <- lapply(dt,function(x){
+  if (any(colnames(x)=="serial")){
+    setnames(x,"serial","id")
+    }
+  })
+dt_t <- rbindlist(dt,fill=TRUE)
+setnames(dt_t,"生物分群","class")
+setnames(dt_t,"調查年","year")
+dt_t <- dt_t[class %in% c("鳥類","哺乳類")]
+write.csv(dt_t,paste0(path,"result/數化整合_鳥類與哺乳類.csv"))
+```
+
+## Step 2. 處理雪霸舊資料
+說明：資料來源由政道老師爬資料庫取得
+資料庫來源(http://spnp.biodiv.tw)
+由於舊資料庫有自己的編號方式，與雪霸給的計畫ID不同。
+因此必須輸出資料庫內的ID-調查年，然後手動查詢實際計畫id，並建立計畫id對應表。
+```{r}
+spnp_dt <- fread(paste0(path,"rawdata/spnp_雪霸舊資料庫/spnp_occurrences.csv"),encoding ="UTF-8")
+colnames(spnp_dt)
+spnp_pro <- unique(spnp_dt[,.(projectId.x,`調查年`)])
+write.csv(spnp_pro,paste0(path,"rawdata/spnp_雪霸舊資料庫/spnp_project_code.csv"))
 ```
 

@@ -9,6 +9,9 @@ output: html_notebook
 library(data.table)
 library(ggplot2)
 library(readxl)
+library(writexl)
+library(stringr)
+library(showtext)#改變中文字型
 ```
 setting up the working dir
 ```{r}
@@ -19,6 +22,7 @@ path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/期中報告/"
 
 ```{r}
 fn <- list.files("E:/雪霸報告統整/哺乳類與鳥類")
+
 dt <- lapply(fn,function(x){
   furl <- paste0("E:/雪霸報告統整/哺乳類與鳥類/",x,"/",x,".xlsx")
   t <-try(read_xlsx(furl,1))
@@ -27,16 +31,27 @@ dt <- lapply(fn,function(x){
 dt[[16]] <- read_xlsx("E:/雪霸報告統整/哺乳類與鳥類/8302-1_雪霸國家公園觀霧地區步道沿線動物資源、植群及其景觀之調查研究—動物資源部分/8302-1_雪霸國家公園觀霧地區步道沿線動物資源、植群及其景觀之調查研究—動物資源部分.xlsx")
 
 dt <- lapply(dt,as.data.table)
-dt <- lapply(dt,function(x){
-  if (any(colnames(x)=="serial")){
-    setnames(x,"serial","id")
-    }
-  })
+
 dt_t <- rbindlist(dt,fill=TRUE)
+
 setnames(dt_t,"生物分群","class")
 setnames(dt_t,"調查年","year")
+unique(dt_t[serial>0,serial])
+dt_t[class=="哺乳動物",class:="哺乳類"]
+
 dt_t <- dt_t[class %in% c("鳥類","哺乳類")]
-write.csv(dt_t,paste0(path,"result/數化整合_鳥類與哺乳類.csv"))
+dt_t <- dt_t[id!=10103]#刪除10103，與spnp資料庫重複
+colnames(dt_t)
+dt_t[,...23:=NULL][,...24:=NULL]
+dt_name <- unique(dt_t[,c("class","物種俗名(原始報告)")])
+length(unique(dt_t$id))
+
+
+
+writexl::write_xlsx(dt_t,paste0(path,"result/數化整合_鳥類與哺乳類.xlsx"))
+
+write.csv(dt_name,paste0(path,"result/數化整合_物種名.csv"))
+rm(dt,dt_name)
 ```
 
 ## Step 2. 處理雪霸舊資料
@@ -49,5 +64,91 @@ spnp_dt <- fread(paste0(path,"rawdata/spnp_雪霸舊資料庫/spnp_occurrences.c
 colnames(spnp_dt)
 spnp_pro <- unique(spnp_dt[,.(projectId.x,`調查年`)])
 write.csv(spnp_pro,paste0(path,"rawdata/spnp_雪霸舊資料庫/spnp_project_code.csv"))
+```
+### Step 2.1
+說明：將手動作好的id對照表匯入，並篩選出哺乳類與鳥類紀錄
+```{r}
+pcode_com <- fread(paste0(path,"rawdata/spnp_雪霸舊資料庫/雪霸舊資料庫id對照表.csv"))
+spnp <- spnp_dt[pcode_com,on=.(projectId.x=projectId.x,`調查年`=`調查年`)]
+spnp_dt[class %in% c("Mammalia","Aves")]
+setnames(spnp,"fit_id","id")
+spnp_f <- spnp[class %in% c("Mammalia","Aves")]
+spnp_sp_name <- unique(spnp_f[,c("class","物種俗名(原始報告)","物種學名(原始報告)")])
+colnames(spnp_f)
+write.csv(spnp,paste0(path,"rawdata/雪霸舊資料庫_計畫id更新.csv"))
+
+write.csv(spnp_f,paste0(path,"rawdata/spnp_雪霸舊資料庫/哺乳類與鳥類篩選.csv"))
+write.csv(spnp_sp_name,paste0(path,"rawdata/spnp_雪霸舊資料庫/名錄確認.csv"))
+
+####處理多餘的檔案
+rm(dt,lost_list,lost_tb,pcode_com,spnp_pro,spnp_sp_name)
+rm(spnp_dt)
+```
+
+## Step 3. 處理武陵新資料庫
+資料來自於武陵新的資料庫
+http://wlterm.biodiv.tw/
+由於與舊資料庫部分重疊，因此採用2018年(含)以後的資料
+
+```{r}
+wl_dt <- fread(paste0(path,"rawdata/武陵資料庫/main.csv"),encoding="UTF-8")
+wl_name <- fread(paste0(path,"rawdata/武陵資料庫/table_forgrid.csv"),encoding="UTF-8")
+wl_pro <-  fread(paste0(path,"rawdata/武陵資料庫/project.csv"),encoding="UTF-8")
+wl_t <- wl_dt[wl_name[,.(record_id,class,chinese)],on=.(record_id=record_id)]
+wl_t <- wl_t[wl_pro,on=.(Project_id=Project_id)]
+###刪除2017以前的資料(與spnp重複)
+wl_t <- wl_t[Project_id>14]
+wl_t <- wl_t[!is.na(id)]
+
+wl_tf <- wl_t[class %in% c("Mammalia","Aves")]
+wl_tf[,id:=10801]
+writexl::write_xlsx(wl_tf,paste0(path,"rawdata/武陵資料庫/哺乳類與鳥類.xlsx"))
+write.csv(unique(wl_tf[,.(class,chinese)]),
+          paste0(path,"rawdata/武陵資料庫/哺乳類與鳥類_名錄.csv"))
+rm(wl_t,wl_pro,wl_dt)
+```
+## Step 4. 處理國家公園資料庫
+處理`20211115_雪霸國家公園調查成果資料(110年更新).xlsx`檔案
+該資料有大量來自於非雪霸國家公園之資料。
+
+```{r}
+ntb <- fread(paste0(path,"rawdata/國家公園資料庫建置計畫/20211115_雪霸國家公園調查成果資料.csv"),encoding="UTF-8")
+ntb_f <- ntb[`分類名稱`%in% c("鳥綱","哺乳綱")]
+ntb_f[`分類名稱`=="鳥綱",class:="鳥類"][`分類名稱`=="哺乳綱",class:="哺乳類"]
+colnames(ntb_f)[7] <- "name"
+ntb_f_name <- unique(ntb_f[,.(class,name,`學名`)])
+write_xlsx(ntb_f,paste0(path,"rawdata/國家公園資料庫建置計畫/鳥類與哺乳類篩選.xlsx"))
+write_xlsx(ntb_f_name,paste0(path,"rawdata/國家公園資料庫建置計畫/鳥類與哺乳類_名錄.xlsx"))
+```
+## Step 5. 處理總資料庫
+說明：資料庫已用手動方式將不同資料來源整合成一檔案，接下來用R做進一步處理，例如將資料的學名填入。
+```{r}
+ttd <- fread(paste0(path,"result/總資料庫_鳥類與哺乳類.csv"),encoding="UTF-8")
+colnames(ttd)
+cttb <- cbind(ttd[,.(total=.N),by=class],ttd[`物種學名`>0,.N,by=class])
+write.csv(cttb,paste0(path,"result/觀察筆數統計.csv"))
+ttd[,year_c:=as.numeric(str_sub(year,1,4))]
+count_n <- ttd[,.(bio_n=.N),by=.(year_c,class)]
+proj_n <- ttd[,.(Number=.N),by=.(id,class,year_c)][,.(Number=.N),by=.(class,year_c)]
+
+
+showtext_auto()
+ggplot(count_n,aes(x=year_c,y=bio_n,fill=class))+
+  geom_col(alpha=0.8)+
+  labs(x="年份",y="資料筆數")+
+  theme(text=element_text(family="source-han-sans-tw",size=36))+
+  scale_x_continuous(breaks = seq(1993,2022,5))
+ggsave(paste0(path,"result/plot/逐年資料筆數_鳥類與哺乳類.jpeg"),width=7,height=3,dpi=300)
+
+ggplot(proj_n,aes(x=year_c,y=Number,fill=class))+
+  geom_col(alpha=0.8)+
+  labs(x="年份",y="研究計畫數量")+
+  theme(text=element_text(family="source-han-sans-tw",size=36))+
+  scale_x_continuous(breaks = seq(1993,2022,5))
+ggsave(paste0(path,"result/plot/逐年計畫數_鳥類與哺乳類.jpeg"),width=7,height=3,dpi=300)
+  
+
+ttd[id==10507&class=="哺乳類",.N]
+
 ```
 

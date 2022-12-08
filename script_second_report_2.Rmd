@@ -1,0 +1,500 @@
+---
+title: "Script_second_report_2"
+output: html_notebook
+---
+# 雪霸第二次期中報告_第二部分
+說明：第一部分是資料整理，包括學名查找。
+第二部分先將數化資料檢查整併，然後處理wkt to shp，
+最後merge到grid的問題。
+# Step 0 package
+```{r}
+path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/第二次期中報告"
+data_path <- "E:/雪霸報告統整"
+```
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(readxl)
+library(writexl)
+library(stringr)
+library(showtext)#改變中文字型
+library(sf) #for gis
+```
+TWD97轉84 code
+```{r}
+library(dplyr)
+
+TWD97TM2toWGS84 <- function (input_lat, input_lon){  
+  # input_lat: TWD97橫座標, 南北緯度, latitude N
+  # input_lon: TWD97縱座標, 東西經度, longitude E
+  
+  input_lat <- input_lat %>% as.character %>% as.numeric()
+  input_lon <- input_lon %>% as.character %>% as.numeric()
+  
+  a = 6378137.0
+  b = 6356752.314245
+  lon0 = 121 * pi / 180
+  k0 = 0.9999
+  dx = 250000
+  dy = 0
+  e = (1 - b^2 / a^2)^0.5
+  
+  
+  x =  input_lat - dx # input_lat: TWD97橫座標, 緯度, latitude
+  y =  input_lon - dy # input_lon: TWD97縱座標, 經度, longitude
+  
+  M = y/k0
+  
+  mu = M/(a*(1.0 - ( e**2 )/4.0 - 3* (e**4)/64.0 - 5* (e**6)/256.0))
+  e1 = (1.0 -  ((1.0 -  (e**2))**0.5)) / (1.0 +  ((1.0 -  (e**2))**0.5))
+  
+  J1 = (3*e1/2 - 27* (e1**3)/32.0)
+  J2 = (21* (e1**2)/16 - 55* (e1**4)/32.0)
+  J3 = (151* (e1**3)/96.0)
+  J4 = (1097* (e1**4)/512.0)
+  
+  fp = mu + J1*sin(2*mu) + J2*sin(4*mu) + J3*sin(6*mu) + J4*sin(8*mu)
+  
+  e2 =  ((e*a/b)**2)
+  C1 =  (e2*cos(fp)**2)
+  T1 =  (tan(fp)**2)
+  R1 = a*(1- (e**2))/ ((1- (e**2)* (sin(fp)**2))**(3.0/2.0))
+  N1 = a/ ((1- (e**2)* (sin(fp)**2))**0.5)
+  
+  D = x/(N1*k0)
+  
+  #緯度計算 latitude
+  Q1 = N1*tan(fp)/R1
+  Q2 = ( (D**2)/2.0)
+  Q3 = (5 + 3*T1 + 10*C1 - 4* (C1**2) - 9*e2)* (D**4)/24.0
+  Q4 = (61 + 90*T1 + 298*C1 + 45* (T1**2) - 3* (C1**2) - 252*e2)* (D**6)/720.0
+  lat = fp - Q1*(Q2 - Q3 + Q4)
+  
+  #經度計算 longitude
+  Q5 = D
+  Q6 = (1 + 2*T1 + C1)* (D**3)/6
+  Q7 = (5 - 2*C1 + 28*T1 - 3* (C1**2) + 8*e2 + 24* (T1**2))* (D**5)/120.0
+  lon = lon0 + (Q5 - Q6 + Q7)/cos(fp)
+  
+  
+  lat = (lat*180) /pi #南北緯度  latitude 
+  lon = (lon*180)/ pi #東西經度  longitude
+
+  WGS = list(lat = lat, lon = lon)
+  return(WGS)
+}
+
+
+```
+
+# Step 1. 確認數化資料內容
+
+```{r}
+dt_ins <- fread(paste0(data_path,"/result/database_insecta_數化資料_完整版.csv"))
+### 處理座標
+#### 檢視座標系統
+colnames(dt_ins)
+unique(dt_ins[,座標系統])
+dt_ins[is.na(座標系統),座標系統:="EPSG:4326"]
+#### 檢查wkt是否完整
+dt_ins[!is.na(wkt)&!grepl(")$",wkt)]
+###補充數化錯誤的點位
+dt_ins[!is.na(wkt)&!grepl(")$",wkt),wkt:="MultiPoint ((121.01440225 24.42763177),(121.01457147 24.42509284),(121.01472782 24.42453849),(121.01487313 24.42688818))"]
+###檢查wkt的座標系統是否都是EPSG:4326
+unique(dt_ins[!is.na(wkt),座標系統])
+### 把TWD97資料轉成WGS84
+coord <- dt_ins[座標系統=="EPSG:3826",.(X,Y)]
+dt_ins[座標系統=="EPSG:3826"]
+back_up_rdt <- dt_ins
+r_coord <- NULL
+for (i in 1:nrow(coord)){
+        dt <- TWD97TM2toWGS84(coord[i,X],coord[i,Y])
+        r_coord <- rbind(r_coord,dt)
+}
+r_coord <- as.data.table(r_coord)
+dt_ins[座標系統=="EPSG:3826",X:=unlist(r_coord$lon)]
+dt_ins[座標系統=="EPSG:3826",Y:=unlist(r_coord$lat)]
+dt_ins[座標系統=="EPSG:3826",座標系統:="EPSG:4326"]
+#### 處理座標度分秒格式轉成度
+dt_ins[grepl("\\d+°",X)]
+
+
+
+#### 修正完畢，回存到result
+
+
+write.csv(dt_ins,paste0(data_path,"/result/database_incesta_數化_完整版_修正座標.csv"))
+```
+# Step 2. wkt to vector to grid
+把wkt的資料merage到網格裡，先將wkt向量化，然後把向量資料結合到grid裡面
+```{r}
+wkt_tb <- dt_ins[!is.na(wkt)]
+unique(wkt_tb[,id])
+wkt_vec <- st_as_sf(wkt_tb,wkt="wkt",crs=4326)
+## 讀入grid
+
+grid <- st_read(paste0(data_path,"/layer/500m網格.gpkg"))
+class(wkt_vec)
+class(grid)
+## 嘗試資料擷取
+d <- st_intersects(grid, wkt_vec)
+d <-  st_join(grid, wkt_vec)
+d
+length(grep(1,))
+grid$record_count <- lengths(st_intersects(grid, wkt_vec))
+plot(d)
+plot(d$科名)
+```
+
+
+# Step 3. 資料彙整
+把所有資料庫的資料與名錄彙整起來
+
+```{r}
+## 一個個匯入並檢視
+db_ins <- fread(paste0(data_path,"/result/database_incesta_數化_完整版_修正座標.csv"))
+db_amp <- fread(paste0(data_path,"/result/database_Amphibia_數化資料.csv"))
+db_act <- fread(paste0(data_path,"/result/database_Actinop_數化資料.csv"))
+db_spnp <- fread(paste0(data_path,"/result/database_spnp_all.csv"))
+db_n <- fread(paste0(data_path,"/result/database_國家資料庫.csv")) 
+db_spnp[,調查日期:=as.character(調查日期)]
+db_n[,調查日期:=as.character(調查日期)]
+db_a <- rbind(db_ins,db_amp,db_act,db_spnp,db_n,fill=TRUE)
+colnames(db_a)
+db_a <- db_a[,c(1:28,29)]
+db_a <- db_a[綱!=""&!is.na(綱)]
+unique(db_a[,綱])
+
+
+setnames(db_a,c("綱","分類階層"),c("class","level"))
+###修正誤把物種名為sp.認定為種
+db_a[grepl("sp\\.$",`物種學名(原始報告)`)&level=="species",level:="genus"]
+db_a[grepl("sp\\.$",`物種學名(原始報告)`)&grepl("[A-Z][a-z]+ [a-z]{3,4}",`物種學名`),
+     `物種學名`:=gsub(" [a-z]+","",物種學名)]
+db_a[grepl("sp\\.$",`物種學名(原始報告)`)&grepl("[A-Z][a-z]+",`物種學名`),
+     `物種學名`:=paste0(物種學名," sp.")]
+#####修正sp.AAF這類
+db_a[grepl("sp\\.[A-Z]{1,3}$",`物種學名(原始報告)`)&level=="species",
+     物種學名:=paste0(str_extract(物種學名,"^[A-Z][a-z]+")," sp.")]
+db_a[grepl("sp\\.[A-Z]{1,3}$",`物種學名(原始報告)`)&level=="species",
+     level:="genus"]
+### 修正科sp
+db_a[grepl("ae sp\\.[A-Z]{1,3}$",`物種學名(原始報告)`)&level=="genus",
+     物種學名:=科名]
+db_a[grepl("ae sp\\.[A-Z]{1,3}$",`物種學名(原始報告)`)&level=="genus",
+     level:="family"]
+
+
+### 修正科spp
+db_a[grepl("ae spp\\.$",`物種學名(原始報告)`)&level=="species",
+     物種學名:=科名]
+db_a[grepl("ae spp\\.$",`物種學名(原始報告)`)&level=="species",level:="family"]
+
+### 修正種spp
+db_a[grepl("spp\\.$",`物種學名(原始報告)`)&level=="species",
+     物種學名:=paste0(str_extract(物種學名,"^[A-Z][a-z]+")," sp.")]
+db_a[grepl("spp\\.$",`物種學名(原始報告)`)&level=="species",level:="genus"]
+
+###
+
+cla_count <- db_a[,.N,by=.(class)]
+level_count <- db_a[,.N,by=.(level,class)]
+
+db_a[class=="Ostracoda"]
+write.csv(cla_count,paste0(path,"/result/綱統計表格.csv"))
+level_count[,level:=factor(level,levels=c("class","subclass","order",
+                                    "suborder","superfamily","family",
+                                    "subfamily","genus","species","nomen nudum"))]
+write.csv(level_count,paste0(path,"/result/分類階層_統計表格.csv"))
+##儲存修改結果
+write.csv(db_a,paste0(path,"/result/database_all.csv"))
+ggplot(level_count,aes(x=level,y=N))+
+  geom_col(width=0.6)+
+  labs(y="Data number",x="Taxonomic rank")+
+  theme_bw()+
+  theme(axis.text.x=element_text(angle=30,hjust=1))
+ggsave(paste0(path,"/result/plot/tax_rank.jpeg"),width=6,height=4,dpi=600)
+```
+## Step 3.1 名錄合併
+```{r}
+nl_ins <- fread(paste0(data_path,"/result/name_list_insecta_數化資料_完整版.csv"))
+nl_amp <- fread(paste0(data_path,"/result/name_list_Amphibia_數化資料.csv"))
+nl_act <- fread(paste0(data_path,"/result/name_list_Actinop_數化資料.csv"))
+nl_spnp <- fread(paste0(data_path,"/result/name_list_spnp_all.csv"))
+nl_n <-fread(paste0(data_path,"/result /name_list_國家資料庫.csv")) 
+setnames(nl_ins,"Level","level")
+nl_amp[,name_code_source:="TaiCol"]
+nl_act[,name_code_source:="TaiCol"]
+nl_act[class=="Ostracoda"]
+nl_all <- rbind(nl_ins,nl_amp,nl_act,nl_spnp,nl_n,fill=TRUE)
+###修正sp.錯誤
+colnames(nl_all)
+nl_all[grepl("sp\\.$",`物種學名(原始報告)`)&level=="species",level:="genus"]
+nl_all[grepl("ae sp\\.$",`物種學名(原始報告)`)&level=="genus",level:="family"]
+nl_all[grepl("ae sp\\.[A-Z]{1,3}$",`物種學名(原始報告)`)&level=="species",level:="family"]
+nl_all[grepl("sp\\.[A-Z]{1,3}$",`物種學名(原始報告)`)&level=="species",level:="genus"]
+####
+nl_all[grepl("ae spp\\.$",`物種學名(原始報告)`)&level=="species",level:="family"]
+nl_all[grepl("spp\\.$",`物種學名(原始報告)`)&level=="species",level:="genus"]
+nl_all[grepl("ae spp\\.[A-Z]{1,3}$",`物種學名(原始報告)`)&level=="species",level:="family"]
+nl_all[grepl("spp\\.[A-Z]{1,3}$",`物種學名(原始報告)`)&level=="species",level:="genus"]
+##
+nl_all[is.na(level)]
+
+unique(nl_all[,level])
+nl_all <- nl_all[level!=""]
+###依照分類階層清除資料
+nl_all[grepl("genus",level),c("common_name_c","name","name_code","species"):=NA][
+  grepl("genus",level),corrected_name:=paste0(genus," sp.")
+]
+nl_all[grepl("family",level),c("common_name_c","name","name_code","species",
+                                   "genus","genus_c"):=NA]
+nl_all[grepl("family",level),corrected_name:=family]
+nl_all[grepl("order",level),c("common_name_c","name","name_code","species",
+                                   "genus","genus_c",
+                                  "family","family_c"):=NA]
+nl_all[grepl("order",level),corrected_name:=order]
+nl_all[grepl("class",level),c("common_name_c","name","name_code","species",
+                                   "genus","genus_c",
+                                  "family","family_c",
+                                  "order","order_c"):=NA]
+nl_all[grepl("class",level),corrected_name:=class]
+       
+       
+nl_all[name_code_source=="GBif",name_code_source:="GBIF"]
+nl_all[level=="species",corrected_name:=name]
+nl_all <- nl_all[level!="delet"]
+### 調整level，把sub跟super類改掉
+nl_all[,level_adj:=gsub("sub","",level)][,level_adj:=gsub("super","",level_adj)]
+unique(nl_all[,level_adj])
+nl_all[class=="Ostracoda"]
+ nl_all[level_adj=="nomen nudum",name:=`物種學名(原始報告)`]
+  nl_all[level_adj=="nomen nudum",species:=`物種學名(原始報告)`]
+ nl_all[level_adj=="nomen nudum"]
+nl_all <- nl_all[class!=""]
+  ### 統整資料，並產出名錄
+colnames(nl_all)
+
+nl_count <- nl_all[,.(kingdom,phylum,class,order,family,genus,species,name,level,level_adj,name_code_source,iucn_code,corrected_name)]
+nl_count[is.na(corrected_name)]
+nl_count[level!="species",iucn_code:=NA]
+nl_count[iucn_code=="NULL",iucn_code:=NA]
+tax_count <- unique(nl_count[,.(phylum,class,corrected_name,level_adj,iucn_code)])
+nlist_proud <- unique(nl_count[,1:8])
+count_spe <-nlist_proud[!is.na(species),.(species=.N),by=.(class)] 
+write.csv(nl_all,paste0(path,"/result/總名錄_未整合.csv"))
+write.csv(tax_count,paste0(path,"/result/物種種數統計.csv"))
+write.csv(nlist_proud,paste0(path,"/result/名錄產製用.csv"))
+### 計算科屬種
+n_species <- nlist_proud[!is.na(name),.(species_n=.N),by=.(class)]
+n_genus<- nlist_proud[!is.na(genus),.(genus=unique(genus)),by=.(class)][
+  ,.(genus_n=.N),by=.(class)]
+n_family<- nlist_proud[!is.na(family),.(family_n=unique(family)),by=.(class)][
+  ,.(family_n=.N),by=.(class)]
+n_order <-  nlist_proud[!is.na(order),.(order_n=unique(order)),by=.(class)][
+  ,.(order_n=.N),by=.(class)]
+class <- unique(nlist_proud[,.(phylum,class)])
+total <- n_order[class,on=.(class)]
+total <- n_family[total,on=.(class)]
+total <- n_genus[total,on=.(class)]
+total <- n_species[total,on=.(class)]
+write.csv(total,paste0(path,"/result/科屬種計算.csv"))
+```
+
+## 研究計畫的數量計算
+計算逐年的計畫數量與筆數
+先做資料處理，計算各分類群的資料筆數
+
+```{r fig.showtext=TRUE, fig.align='center'}
+db_a[,year:=as.numeric(str_extract(調查年,"\\d{4}"))]
+unique(db_a[,year])
+
+count_n <- db_a[,.(bio_n=.N),by=.(year,class)]
+count_n[class=="Insecta",class_2:="昆蟲"][is.na(class_2),class_2:="其他"]
+count_n[class %in% c("Amphibia","Reptilia","Actinopterygii"),class_3:=class][
+  is.na(class_3),class_3:="Others"]
+pro_n <- db_a[,.(pro_n=unique(id)),by=.(year,class)][,.(pro_n=.N),by=.(year,class)]
+pro_n <- pro_n[class %in% c("Insecta","Amphibia","Reptilia","Actinopterygii")]
+pro_n[,class:=factor(class,levels=c("Insecta","Amphibia","Reptilia","Actinopterygii"))]
+showtext_auto()
+showtext_opts(dpi=600)
+ggplot(count_n,aes(x=year,y=bio_n,fill=class_2))+
+  geom_col(alpha=0.8)+
+  labs(x="年份",y="資料筆數",fill="分類群")+
+  theme_bw()+
+  theme(text=element_text(family="source-han-sans-tw",size=36))+
+  scale_x_continuous(breaks = seq(1993,2022,5))
+ggsave(paste0(path,"/result/plot/逐年資料筆數_兩爬魚類昆蟲與其他_total.jpeg"),width=8,height=5,dpi=600)
+
+ggplot(count_n[class%in% c("Amphibia","Reptilia","Actinopterygii")],
+       aes(x=year,y=bio_n,fill=class))+
+  geom_col(alpha=0.7)+
+  labs(x="年份",y="資料筆數",fill="分類群")+
+  theme_bw()+
+  theme(text=element_text(family="source-han-sans-tw",size =12),
+        legend.position = "bottom")+
+  scale_x_continuous(breaks = seq(1993,2022,5))
+ggsave(paste0(path,"/result/plot/逐年資料筆數_兩爬魚類與其他.jpeg"),width=8,height=5,dpi=600)
+
+ggplot(pro_n,aes(x=year,y=pro_n,fill=class))+
+  geom_col(alpha=0.8)+
+  theme_bw()+
+  scale_fill_brewer(palette="Spectral",direction=-1)+
+  labs(x="年份",y="計畫數量",fill="分類群")+
+  theme(text=element_text(family="source-han-sans-tw",size=12),
+        legend.position="bottom")+
+  scale_x_continuous(breaks = seq(1993,2022,5))
+ggsave(paste0(path,"/result/plot/逐年計畫數_魚類兩爬昆蟲.jpeg"),width=8,height=5,dpi=600)
+
+
+```
+## 學名再確認
+
+重點在於名錄產製
+
+```{r}
+## 載入taicol 名錄
+namelist <- fread(paste0(data_path,"/名錄_TaiCol/TaiwanSpecies20221102_UTF8.csv"),encoding="UTF-8")
+colnames(nl_all)
+n_list <- nl_all[,.(phylum,class,order,family,genus,name,species,level_adj)]
+n_list <- unique(n_list)
+n_list[level_adj=="species"]
+n_list_1 <- namelist[is_accepted_name==1,.(name,author,common_name_c)][n_list,on=.(name)]
+fam_list <- unique(namelist[is_accepted_name==1,.(family,family_c)])
+n_list_1 <- fam_list[n_list_1,on=.(family)]
+ord_list <- unique(namelist[is_accepted_name==1,.(order,order_c)])
+clas_list <- unique(namelist[is_accepted_name==1,.(class,class_c)])
+n_list_1 <- ord_list[n_list_1,on=.(order)]
+n_list_1 <- clas_list[n_list_1,on=.(class)]
+### 處理中文名
+
+n_list_1[grepl(";",common_name_c),name_c:=str_extract(common_name_c,"[^x00-x80]+;")]
+n_list_1[is.na(name_c)&!is.na(common_name_c),name_c:=common_name_c]
+n_list_1[,name_c:=gsub(";","",name_c)]
+colnames(n_list_1)
+unique(n_list_1$level_adj)
+n_list_1[level_adj=="nomen nudum",author:="nomen nudum"]
+n_list_1[level_adj=="genus",name:=paste0(genus," sp.")]
+lis_product <- n_list_1[,.(name=paste0("*",name,"*"," ",author," ",name_c),
+                           family=paste0(family," ",family_c),
+                           order=paste0(order," ",order_c),
+                           class=paste0(class," ",class_c),phylum,level_adj)]
+lis_product[!(level_adj %in% c("species","genus","nomen nudum")),name:=""]
+lis_product[,c("name","family"):=.(gsub("NA ","",name),gsub("NA ","",family))]
+lis_product[,c("name","family"):=.(gsub(" NA","",name),gsub(" NA","",family))]
+lis_product[,c("name","family","order"):=
+              .(gsub(" NULL","",name),gsub(" NULL","",family),gsub(" NULL","",order))]
+write.csv(lis_product,"/result/昆蟲魚貝兩爬_總學名.csv")
+```
+## 處理數化資料的空間資訊
+
+```{r}
+##檢查座標
+
+db_a[is.na(座標系統),]
+db_a[is.na(座標系統),座標系統:="EPSG:4326"]##經確認後，缺資料的都是4326
+
+unique(db_a$座標系統)
+db_a[座標系統=="EPSG:3826"]##座標已轉換
+###檢視wkt
+db_a[is.na(wkt)&is.na(X)]
+#####id 8401的座標有誤，必須更新
+coord_8401 <- fread(paste0(data_path,"/processing/8401_昆蟲_座標更新.csv"))
+db_a[id==8401,c("X","Y"):=.(coord_8401$X,coord_8401$Y)]
+db_a[id==8401,]
+##檢視wkt是否完整
+ch <- unique(db_a[!is.na(wkt)&!(grepl(")$",wkt)),.(id,wkt,樣區編號)])
+ch[order(id)]
+###補充數化錯誤的wkt
+####處理9216的wkt錯誤
+wkt_9216 <- fread(paste0(data_path,"/processing/9216_wkt.csv"))
+db_a[id==9216&樣區編號==5,wkt:=wkt_9216[id==5,wkt]]
+db_a[id==9216&樣區編號==1,wkt:=wkt_9216[id==1,wkt]]
+db_a[id==9216&樣區編號==3,wkt:=wkt_9216[id==3,wkt]]
+### 處理8911
+wkt_8911 <- fread(paste0(data_path,"/processing/8911_wkt.csv"))
+db_a[id==8911&樣區編號==3,wkt:=wkt_8911[4,wkt]]
+db_a[id==8911&樣區編號==5,wkt:=wkt_8911[2,wkt]]
+### 處理10605
+wkt_10605 <- fread(paste0(data_path,"/processing/10605_wkt.csv"))
+db_a[id==10605&!is.na(wkt),wkt:=wkt_10605[1,wkt]]
+###處理8302-1
+wkt_8302 <- fread(paste0(data_path,"/processing/8302-1_wkt.csv"))
+db_a[id=="8302-1"&grepl("^MultiP",wkt),wkt:=wkt_8302[1,wkt]]
+### 檢查是否都x,y ,wkt都有的數據
+db_a[!is.na(X)&!is.na(wkt),wkt:=NA]
+write.csv(db_a,paste0(path,"/result/db_all_backup_20221208_02.csv"))
+### 檢查是否都是wgs84
+unique(db_a[座標系統=="EPSG:3826",id])
+db_a[!is.na(wkt)&!grepl("\\(12\\d\\.",wkt)]
+####10107與10208都已換算過了可將代號直接換掉
+db_a[id%in% c(10107,10208),座標系統:="EPSG:4326"]
+####9816是wkt 該資料已有資料庫，故將數化資料刪除
+
+db_a[order(id),record_id:=1:nrow(db_a)]
+delete_id <- db_a[id==9816&!is.na(wkt),record_id]
+db_a <- db_a[!(record_id %in% delete_id)]
+rm(db_test,delete_id)
+write.csv(db_a,paste0(path,"/result/db_all_backup_20221208_03.csv"))
+### 檢查是否都是wgs84
+unique(db_a[!is.na(X)&!grepl("^12\\d\\.",X),id])
+db_a[!is.na(X)&!grepl("^12\\d\\.",X)&id==10508]
+db_a[id==9816]
+###XY顛倒10306
+X10306 <- db_a[id==10306]$X
+db_a[id==10306,X:=Y][id==10306,Y:=X10306]
+db_a[id==10306]
+###10508度分秒格式
+fix_10508 <- db_a[id==10508,.(X,Y)]
+fix_10508[,X_1:=gsub("(12\\d)°(\\d{2})'(\\d+\\.\\d).+","\\1_\\2_\\3",X)]
+fix_10508[,Y_1:=gsub("(2\\d)°(\\d{2})'(\\d+\\.\\d).+","\\1_\\2_\\3",Y)]
+fix_10508_2 <-as.data.table(cbind(str_split_fixed(fix_10508$X_1,"_",3),
+                                  str_split_fixed(fix_10508$Y_1,"_",3)))
+colnames(fix_10508_2) <- c("x1","x2","x3","y1","y2","y3")
+fix_10508_2[, names(fix_10508_2) := lapply(.SD, as.numeric)]
+fix_10508_2[,X:=(x1+x2/60+x3/3600)][,Y:=(y1+y2/60+y3/3600)]
+db_a[id==10508,X:=fix_10508_2$X][id==10508,Y:=fix_10508_2$Y]
+rm(test,fix_10508,fix_10508_2,db_test)
+write.csv(db_a,paste0(path,"/result/db_all_backup_20221208_04.csv"))
+### 檢查是否都是Y值
+unique(db_a[!is.na(X)&!grepl("^2\\d\\.",Y),])
+db_a[!is.na(Y)&!grepl("^2\\d\\.",Y),Y:=NA]
+###
+```
+# 進入圖層合併
+將資料merage到三通資料以及500網格裡面。
+
+```{r}
+###修正9706wkt原設定為加入z座標的，修正
+wkt_9706 <- fread(paste0(data_path,"/processing/wkt_9706.csv"))
+db_a[record_id==72746,wkt:=wkt_9706[1,wkt]]
+write.csv(db_a,paste0(path,"/result/db_all_backup_20221208_05.csv"))
+###輩分
+dt_merage <- db_a
+
+wkt_tb <- dt_merage[!is.na(wkt)]
+unique(wkt_tb[,id])
+wkt_tb[1080]
+for (i in 1:nrow(wkt_tb)){
+  test <- st_as_sf(wkt_tb[i,],wkt="wkt",crs=4326)
+}
+wkt_all <- st_as_sf(wkt_tb,wkt="wkt",crs=4326)
+## 讀入grid與三通圖
+grid <- st_read(paste0(data_path,"/layer/500m網格.gpkg"))
+n_rng <- st_read(paste0(data_path,"/layer/雪霸三通範圍.gpkg"))
+n_rng
+class(wkt_vec)
+class(grid)
+## 嘗試資料擷取
+d <- st_intersects(grid, wkt_vec)
+d <-  st_join(grid, wkt_vec)
+d
+length(grep(1,))
+grid$record_count <- lengths(st_intersects(grid, wkt_vec))
+plot(d)
+plot(d$科名)
+```
+
+
+

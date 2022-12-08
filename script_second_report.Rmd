@@ -4,14 +4,14 @@ output: html_notebook
 ---
 # 第二次期中報告整理
 說明:
-區分為三個步驟
-1. 整合過去資料庫中的所有資料，並篩選出昆蟲類、兩爬類以及魚貝類資料
-2. 整合數化資料，並檢查資料是否有錯誤
-3, 將兩者資料整合並網格化
+1. 整合數化資料
+2. 整合過去資料庫中的所有資料，並篩選出昆蟲類、兩爬類以及魚貝類資料
 
 # Step 0. data direction and package
+
 ```{r}
 path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/第二次期中報告"
+data_path <- "E:/雪霸報告統整"
 ```
 
 
@@ -28,7 +28,7 @@ library(showtext)#改變中文字型
 由於神祕的字元問題，所以資料從本機的硬碟毒入
 ## Step 1.1 昆蟲處理_整合資料
 ```{r}
-data_path <- "E:/雪霸報告統整"
+
 file_name <- list.files(paste0(data_path,"/昆蟲"))
 rdt <- lapply(file_name,function(x){
     tryCatch({
@@ -41,16 +41,21 @@ rdt <- lapply(file_name,function(x){
     return(dt)
     })
 
+
 ###手動加入(可能是字元問題)
 
 test <- as.data.table(read_xlsx("E:/雪霸報告統整/昆蟲/10508_武陵地區七家灣溪壩體改善後臺灣櫻花鉤吻鮭棲地監測暨現存其它棲地調查與改善評估/10508_武陵地區七家灣溪壩體改善後臺灣櫻花鉤吻鮭棲地監測暨現存其它棲地調查與改善評估.xlsx"))
 rdt[[7]] <- test
 ### 處理新增欄位名稱不統一的狀況
+
 rdt <- lapply(rdt,function(x){
   if("目" %in% colnames(x)){
     setnames(x,"目","目名")
   }
+  x[,調查日期:=as.character(調查日期)]
+  return(x)
 })
+
 rdt_all <- rbindlist(rdt,fill=TRUE)
 ### 輸出學名
 colnames(rdt_all)
@@ -89,8 +94,14 @@ unique(namelist[,phylum])
 邏輯:先比對總學名，沒東西的再進入屬名、科名，最後unknow
 
 ```{r}
-name_check <- namelist[,11:12][name_check,on=.(name=sci_name_org)]
 name_check[,id:=1:nrow(name_check)]
+name_check <- namelist[,11:12][name_check,on=.(name=sci_name_org)]
+
+name_check <-namelist[,.(name_code,common_name_c)][
+  name_check,on=.(common_name_c=`物種俗名(原始報告)`)]
+name_check[is.na(name_code)&!is.na(i.name_code),name_code:=i.name_code]
+name_check[,i.name_code:=NULL]
+
 ### 比對屬名
 name_ch_2 <- name_check[is.na(name_code)&!grepl("sp\\.",species)&!grepl("spp\\.",species)]
 
@@ -105,6 +116,7 @@ rm(name,check_name_2)
 #### 檢視查找到的學名
 name_check <- name_ch_2[,.(name,name_check_2,id,name_code_2)][
   name_check,on=.(name=name,id=id)]
+
 #### 輸出學名 先處理屬名與種名都有的部分
 
 write.csv(name_check,paste0(data_path,"/processing/name_check_insect_01.csv"))
@@ -205,30 +217,360 @@ unique(d_rp_na$level)
 d_rp_na[level=="class",c("科名","科名(中文)","目名","目名(中文)"):=.(NA,NA,NA,NA)]
 #### 移除其他多餘的資訊
 colnames(d_rp_na)
-d_rp_na_2 <- d_rp_na[,c(43:53,55:59,25,33)]
+d_rp_na_2 <- d_rp_na[,c(43:53,55:59,25,33,22)]
 setnames(d_rp_na_2,"i.name","org_name")
 write.csv(d_rp_na_2,paste0(data_path,"/processing/name_check_insect_03.csv"))
 write.csv(d_rp_na_2,paste0(data_path,"/result/name_list_insect_數化資料.csv"))
 ```
 ### step.1.1.7 合併原始表格並輸出至result
 ```{r}
-
+d_rp_na_2 <- fread(paste0(data_path,"/result/name_list_insect_數化資料.csv"))
 name_check <- unique(rdt_all[,14:19])
+write.csv(name_check,paste0(data_path,"/processing/name_ch_re.csv"))
+rdt_all[,record_id:=1:nrow(rdt_all)]
 
-name_check[,sp_id:=1:nrow(name_check)]
-colnames(name_check)
-rdt_all <- rdt_all[name_check,on=.(`目名`,`科名(原始報告)`,`科名`,`物種俗名(原始報告)`,`物種學名(原始報告)`,`物種學名`)]
-rdt_all_add <- rdt_all[d_rp_na_2,on=.(sp_id=id)]
-rm(name_check,name_check_3,name_check_4,rdt_all_add_name)
-### 處理數化好的資料
+rdt_all_add <- d_rp_na_2[rdt_all,on=.(org_name=`物種學名(原始報告)`,
+                                      `物種俗名(原始報告)`)]
+rdt_all_add[duplicated(record_id)==TRUE]
+rdt_all_add <- rdt_all_add[duplicated(record_id)==FALSE]
+colnames(rdt_all_add)
+rdt_all_add[,c("i.科名","i.物種學名","分類階層","i.目名"):=
+              .(科名,物種學名,level,目名)]
+rdt_all_add <- rdt_all_add[,c("id","調查年","調查日期","生物分群","i.綱","X","Y","wkt","座標系統","位置誤差","樣區編號","調查方法","分類階層","i.科名(原始報告)","i.科名","物種俗名(原始報告)","org_name","i.物種學名","生活史","數量","數量單位","備註","目名(原始報告)","i.目名","accepted_name_code","level","修正報告")]
 
-rdt_all_add[,c("綱","目名","科名","物種學名","分類階層"):=
-              .(i.綱,i.目名,i.科名,i.物種學名,level)]
-rdt_all_add[,c(25:41):=NULL]
-write.csv(rdt_all_add,paste0(data_path,"/result/database_insect_數化資料.csv"))
-####資料清除
-rm(d_rp_na,d_rp_na_2,name_l_art,rdt,rdt_all_add,sp_n,rdt_all)
+add_list[]
+setnames(rdt_all_add,c("i.科名","i.物種學名","分類階層","i.目名"),
+         c("科名","物種學名","分類階層","目名"))
+setnames(rdt_all_add,"org_name","物種學名(原始報告)")
+rdt_all_add[is.na(accepted_name_code)]
+r_dt <- rdt_all_add[,record_id:=1:nrow(rdt_all_add)]
+####幫後面的表格補上level與註解
+rdt_all_add[,record_id:=1:nrow(rdt_all)]
+note_list <- rdt_all_add[,.(record_id,accepted_name_code,level,修正報告)]
+rm(rdt_all,rdt,rdt_all_add)
+#####
+
+write.csv(r_dt,paste0(data_path,("/processing/database_insect_second.csv")))
+#####重新查找學名
+
+
 ```
+### Step 1.1.8 重新查找學名
+由於犯了愚蠢的錯誤，導致學名只查了不到一半的計畫 所以一切重來
+```{r}
+rdt <- fread(paste0(data_path,("/processing/database_insect_second.csv")))
+colnames(rdt)
+setnames(rdt,c("i.綱","i.科名(原始報告)"),c("綱","科名(原始報告)"))
+ch_n <- unique(rdt[,c("科名(原始報告)","物種俗名(原始報告)","物種學名(原始報告)","目名(原始報告)","accepted_name_code")])
+ch_n[,sp_id:=1:nrow(ch_n)]
+#############
+
+rdt <- rdt[ch_n,on=.(`科名(原始報告)`,`物種俗名(原始報告)`,
+                     `物種學名(原始報告)`,`目名(原始報告)`,`accepted_name_code`)]
+
+#######startline########################
+ch_n <- backup_ncheck
+ch_n[,accepted_name_code:=as.character(accepted_name_code)]
+ch_1 <- ch_n[is.na(accepted_name_code)]
+setnames(ch_1,c("物種學名(原始報告)","科名(原始報告)",
+                "物種俗名(原始報告)","目名(原始報告)"),
+         c("sci_name_org","family_org","comm_name_org","order_org"))
+### 對應學名
+ch_1 <- namelist[,.(accepted_name_code,name)][ch_1,on=.(name=sci_name_org)]
+### 加回原本的名錄
+ch_n <- ch_1[!is.na(accepted_name_code),
+             .(accepted_name_code,sp_id)][ch_n,on=.(sp_id)]
+ch_n[is.na(accepted_name_code)&!is.na(i.accepted_name_code),
+     accepted_name_code:=i.accepted_name_code]
+ch_n[,i.accepted_name_code:=NULL]
+ch_2<- ch_n[is.na(accepted_name_code)]
+setnames(ch_2,c("物種學名(原始報告)","科名(原始報告)",
+                "物種俗名(原始報告)","目名(原始報告)"),
+         c("sci_name_org","family_org","comm_name_org","order_org"))
+
+### 對應俗名
+ch_2<- namelist[,.(accepted_name_code,common_name_c)][ch_1,on=.(common_name_c=comm_name_org)]
+ch_n <- ch_2[!is.na(accepted_name_code),
+             .(accepted_name_code,sp_id)][ch_n,on=.(sp_id)]
+ch_n[is.na(accepted_name_code)&!is.na(i.accepted_name_code),
+     accepted_name_code:=i.accepted_name_code]
+ch_n[,i.accepted_name_code:=NULL]
+
+ch_3<- ch_n[is.na(accepted_name_code)]
+setnames(ch_3,c("物種學名(原始報告)","科名(原始報告)",
+                "物種俗名(原始報告)","目名(原始報告)"),
+         c("sci_name_org","family_org","comm_name_org","order_org"))
+
+#### 處理沒有學名只有俗名的部分
+com_name <- ch_3[is.na(sci_name_org)&!is.na(comm_name_org),.(comm_name_org,sp_id)]
+sea_num <- lapply(com_name$comm_name_org,function(x){
+  name <- grep(x,name_l_art$common_name_c)[1]
+  return(name)
+  })
+com_n_c <-lapply(sea_num,function(x){
+  dt <-data.table(name=name_l_art$common_name_c[x],
+                  accepted_name_code=name_l_art$accepted_name_code[x])
+  return(dt)
+}) 
+com_n_c <- rbindlist(com_n_c)
+com_name <- cbind(com_name,com_n_c)
+### 輸出修正，很多明顯不是單純物種名稱，更可能只是科名
+write.csv(com_name,paste0(data_path,"/processing/name_check_insect_re_02.csv"))
+rdt[`物種俗名(原始報告)`=="木虻",`物種學名(原始報告)`:="Xylophagidae"]
+### 先讀入然後再查找一次
+rm(com_n_c,com_name,sea_num,com_name_n)
+ch_3_1 <- as.data.table(read_xlsx(paste0(data_path,"/processing/name_check_insect_re_02.xlsx")))
+ch_n <- ch_3_1[!is.na(accepted_name_code),
+             .(accepted_name_code,sp_id,Level)][ch_n,on=.(sp_id)]
+ch_n[is.na(accepted_name_code)&!is.na(i.accepted_name_code)
+     ,accepted_name_code:=i.accepted_name_code]
+ch_n[,i.accepted_name_code:=NULL]
+ch_3_2 <- ch_3_1[accepted_name_code=="NA",.(comm_name_org,sp_id)]
+sea_dt <- lapply(ch_3_2$comm_name_org,function(x){
+  name <- grep(x,name_l_art$common_name_c)[1]
+  dt <-data.table(name=name_l_art$common_name_c[name],
+                  accepted_name_code=name_l_art$accepted_name_code[name])
+  return(dt)
+}) 
+sea_dt <- rbindlist(sea_dt)
+ch_3_2 <- cbind(ch_3_2,sea_dt)
+write.csv(ch_3_2,paste0(data_path,"/processing/name_check_insect_re_03.csv"))
+####補上科名，後續修正
+ch_n[sp_id==428,c("科名(原始報告)","物種學名(原始報告)"):="Xylophagidae"]
+
+####讀入資料
+ch_3_3 <- as.data.table(read_xlsx(paste0(data_path,"/processing/name_check_insect_re_03.xlsx")))
+ch_n <- ch_3_3[!is.na(accepted_name_code),
+             .(accepted_name_code,sp_id,Level)][ch_n,on=.(sp_id)]
+ch_n[is.na(accepted_name_code)&!is.na(i.accepted_name_code)
+     ,accepted_name_code:=i.accepted_name_code]
+ch_n[is.na(Level)&!is.na(i.Level),Level:=i.Level]
+ch_n[,c("i.accepted_name_code","i.Level"):=NULL]
+ch_n[accepted_name_code=="NA",accepted_name_code:=NA]
+ch_n[!is.na(accepted_name_code)&is.na(Level),Level:="species"]
+ch_n[is.na(accepted_name_code)]
+ch_n[!is.na(accepted_name_code),name_code_source:="taiCol"]
+
+```
+### Step 1.1.9 進入查找GBIF階段
+先丟給GBIF做初步判斷再回到taicol
+```{r}
+
+ch_4 <- ch_n[is.na(accepted_name_code)]
+setnames(ch_4,c("物種學名(原始報告)","科名(原始報告)",
+                "物種俗名(原始報告)","目名(原始報告)"),
+         c("sci_name_org","family_org","comm_name_org","order_org"))
+ch_4[is.na(sci_name_org),sci_name_org:=comm_name_org]
+ch_4[is.na(sci_name_org),sci_name_org:=family_org]
+write.csv(ch_4,paste0(data_path,"/processing/name_check_insect_re_04.csv"))
+### 重新讀入
+ch_4_1 <- as.data.table(read_xlsx(paste0(data_path,"/processing/name_check_insect_re_04_for_GBIF_result.xlsx")))
+### 先把有code的加回去，再把剩下修正過學名的再對一次taiCol
+ch_n<- ch_4_1[!is.na(accepted_name_code),
+             .(accepted_name_code,sp_id,name_code_source,Level)][
+               ch_n,on=.(sp_id)]
+colnames(ch_n)
+ch_n[,accepted_name_code:=as.character(accepted_name_code)]
+ch_n[is.na(accepted_name_code)&!is.na(i.accepted_name_code)
+     ,accepted_name_code:=i.accepted_name_code]
+ch_n[is.na(Level)&!is.na(i.Level),Level:=i.Level]
+ch_n[is.na(name_code_source)&!is.na(i.name_code_source),
+     name_code_source:=i.name_code_source]
+ch_n[,c("i.accepted_name_code","i.Level","i.name_code_source"):=NULL]
+### 再對一次taicol
+colnames(ch_4_1)
+ch_4_2<- namelist[,.(accepted_name_code,name)][
+  ch_4_1[is.na(accepted_name_code)],on=.(name=verbatimScientificName)]
+ch_4_2[,i.accepted_name_code:=NULL]
+famlist <- namelist[duplicated(family)==FALSE]
+ch_4_3<- famlist[,.(accepted_name_code,family)][
+  ch_4_2,on=.(family=family)]
+ch_4_3[is.na(i.accepted_name_code)&!is.na(accepted_name_code)
+     ,i.accepted_name_code:=accepted_name_code]
+ch_4_3[,accepted_name_code:=NULL]
+ch_4_3[grepl("[A-Z][a-z]+ [a-z]+",name),Level:="species"]
+ch_4_3[is.na(Level)&!is.na(i.accepted_name_code),Level:="family"]
+ch_4_3[!is.na(i.accepted_name_code),name_code_source:="taiCol"]
+
+###再加回去
+ch_n<- ch_4_3[!is.na(i.accepted_name_code),
+             .(i.accepted_name_code,sp_id,name_code_source,Level)][
+               ch_n,on=.(sp_id)]
+ch_n[is.na(accepted_name_code)&!is.na(i.accepted_name_code)
+     ,accepted_name_code:=i.accepted_name_code]##注意這邊是跟之前顛倒的
+ch_n[is.na(Level)&!is.na(i.Level),Level:=i.Level]
+ch_n[is.na(name_code_source)&!is.na(i.name_code_source),
+     name_code_source:=i.name_code_source]
+ch_n[,c("i.accepted_name_code","i.Level","i.name_code_source"):=NULL]
+ch_5 <- ch_n[is.na(accepted_name_code)]
+write.csv(ch_5,paste0(data_path,"/processing/name_check_insect_re_05.csv"))
+### 讀入
+ch_5_1 <- as.data.table(read_xlsx(paste0(data_path,"/processing/name_check_insect_re_05.xlsx")))
+ch_n <- ch_5_1[!is.na(accepted_name_code),
+             .(accepted_name_code,sp_id,name_code_source,Level)][
+               ch_n,on=.(sp_id)]
+ch_n[is.na(accepted_name_code)&!is.na(i.accepted_name_code)
+     ,accepted_name_code:=i.accepted_name_code]
+ch_n[is.na(Level)&!is.na(i.Level),Level:=i.Level]
+ch_n[is.na(name_code_source)&!is.na(i.name_code_source),
+     name_code_source:=i.name_code_source]
+ch_n[,c("i.accepted_name_code","i.Level","i.name_code_source"):=NULL]
+### 對應order
+ch_6 <- ch_n[is.na(accepted_name_code)]
+orderlist <- namelist[duplicated(order)==FALSE]
+#### 
+write.csv(ch_6,paste0(data_path,"/processing/name_check_insect_re_06.csv"))
+### 模糊比對
+name <- agrep("Chalcidoidea",unique(name_l_art$genus),max.distance = 0.2)
+unique(name_l_art$genus)[name]
+### 將最後的學名合併
+ch_6_1 <-  as.data.table(read_xlsx(paste0(data_path,"/processing/name_check_insect_re_06.xlsx")))
+back_up_2 <- ch_n
+ch_n[,.(sp_id)]
+ch_n <- back_up_2
+ch_n <- ch_6_1[!is.na(accepted_name_code),
+             .(accepted_name_code,sp_id,name_code_source,Level)][
+               ch_n,on=.(sp_id)]
+
+ch_n[is.na(accepted_name_code)&!is.na(i.accepted_name_code)
+     ,accepted_name_code:=i.accepted_name_code]
+ch_n[is.na(accepted_name_code)]
+ch_n[is.na(Level)&!is.na(i.Level),Level:=i.Level]
+ch_n[is.na(name_code_source)&!is.na(i.name_code_source),
+     name_code_source:=i.name_code_source]
+ch_n[,c("i.accepted_name_code","i.Level","i.name_code_source"):=NULL]
+unique(ch_n$name_code_source)
+ch_n[name_code_source=="taiCol",name_code_source:="TaiCol"]
+### 檢查重複值
+ch_n[duplicated(sp_id),sp_id]
+ch_n[sp_id %in% c(ch_n[duplicated(sp_id),sp_id])]
+ch_n <- ch_n[duplicated(sp_id)==FALSE]
+
+#### 篩選過程中把原始目名刪除了，再次補上
+rdt[sp_id==241,`目名(原始報告)`:=c("半翅目","雙翅目 ","膜翅目",
+                             "鞘翅目","直翅目","革翅目","脈翅目",
+                             "彈尾目","竹節蟲目","嚙蟲目","纓翅目 ",
+                             "鱗翅目 ","蜚蠊目 ","半翅目","雙翅目 ",
+                             "膜翅目","鞘翅目","直翅目","革翅目",
+                             "脈翅目","彈尾目","竹節蟲目","嚙蟲目",
+                             "纓翅目 ","鱗翅目 ","毛翅目","長翅目","蜚蠊目"
+
+)]
+rdt[sp_id==241]
+rdt[sp_id==241,sp_id:=c("241_1","241_2","241_3","241_4","241_5","241_6","241_7","241_8","241_9","241_10","241_11","241_12","241_13","241_1","241_2","241_3","241_4","241_5","241_6","241_7","241_8","241_9","241_10","241_11","241_12","241_14","241_15","241_13")]
+rdt[is.na(sp_id)]
+write.csv(ch_n,paste0(data_path,"/processing/name_list_insecta_數化資料_temp.csv"))
+write.csv(back_rdt_2,paste0(data_path,"/processing/database_insecta_數化資料_temp.csv"))
+####合併note
+rdt <- back_rdt_2
+rdt <- note_list[rdt,on=.(record_id,accepted_name_code)]
+### 將名錄資料區分為GBIF與TaiCol
+unique(ch_n[,Level])
+#### 先處理資料問題
+ch_n[Level=="NA"&sp_id==1769,Level:="family"]
+ch_n[Level=="Class",Level:="class"]
+ch_n[Level=="SPECIES",Level:="species"]
+ch_n[accepted_name_code=="org",Level:="genus"]
+ch_n[accepted_name_code=="org",name_code_source:="GBIF"]
+####更新org的那三筆資料
+write.csv(ch_n[accepted_name_code=="org"],paste0(data_path,"/processing/final_check_GBIF.csv"))
+ch_n[accepted_name_code=="org",accepted_name_code:=c("2001663","1434832","1437358")]
+ch_n[duplicated(sp_id)]
+###
+n_tCol <- ch_n[name_code_source=="TaiCol"]
+n_gBif <- ch_n[name_code_source=="GBIF"]
+
+### 先處理taiCol
+### 加入補充學名
+supply_name <- fread(paste0(data_path,"/processing/tai_supply_name.csv"))
+
+n_tCol <-rbind(n_tCol,supply_name,fill=TRUE)
+n_tCol[is.na(name_code_source),name_code_source:="TaiCol"]
+n_tCol <- n_tCol[duplicated(sp_id)==FALSE]
+#####處理找錯代號
+n_tCol[accepted_name_code=="425378",accepted_name_code:="440870"]
+n_tCol <- namelist[is_accepted_name==1][n_tCol,on=.(accepted_name_code)]
+n_tCol[accepted_name_code=="440870"]
+### 處理GBIF
+write.csv(n_gBif,paste0(data_path,"/processing/name_list_insecta_forGBIF.csv"))
+n_bgif_2 <- lapply(n_gBif$accepted_name_code,function(x){
+  a <- rgbif::occ_search(taxonKey = x,limit=1)
+  dt <- data.table(a$hierarchy[[1]],accepted_name_code=x)
+  return(dt)
+  })
+
+for (i in 1:98){
+  sp_id <- n_gBif$sp_id[i]
+ n_bgif_2[[i]][,sp_id:=sp_id] 
+}
+
+n_bgif_3 <- rbindlist(n_bgif_2)
+n_bgif_3[duplicated(sp_id)]
+n_BIF_t <- dcast(n_bgif_3,sp_id+accepted_name_code~rank,value.var = c("name"))
+n_BIF_t <- n_BIF_t[,.(sp_id,accepted_name_code,kingdom,phylum,class,order,family,genus,species)]
+
+n_gbif_all <- cbind(n_gBif[,.(name_code_source,Level)],n_BIF_t)
+n_gbif_all[,name:=species]
+## 依據level 移除level之下的項目
+nl_all <- rbind(n_tCol,n_gbif_all,fill=TRUE)
+nl_all[Level=="species",corrected_name:=name]
+nl_all[duplicated(sp_id)]
+nl_all[grepl("genus",Level),c("common_name_c","name","name_code","species"):=NA][
+  grepl("genus",Level),corrected_name:=paste0(genus," sp.")
+]
+nl_all[grepl("family",Level),c("common_name_c","name","name_code","species",
+                                   "genus","genus_c"):=NA]
+nl_all[grepl("family",Level),corrected_name:=family]
+nl_all[grepl("order",Level),c("common_name_c","name","name_code","species",
+                                   "genus","genus_c",
+                                  "family","family_c"):=NA]
+nl_all[grepl("order",Level),corrected_name:=order]
+nl_all[grepl("class",Level),c("common_name_c","name","name_code","species",
+                                   "genus","genus_c",
+                                  "family","family_c",
+                                  "order","order_c"):=NA]
+colnames(nl_all)
+nl_all[grepl("class",Level),corrected_name:=class]
+####處理裸名
+nl_all[`物種俗名(原始報告)`=="大鹿長節石蛾",Level:="nomen nudum"]
+nl_all[Level=="nomen nudum"]
+nl_all[`物種俗名(原始報告)`=="大鹿長節石蛾",name:=`物種學名(原始報告)`]
+nl_all[`物種俗名(原始報告)`=="大鹿長節石蛾",common_name_c:="大鹿長節石蛾"]
+unique(nl_all[genus=="Micrasema",1:14])
+nl_all[`物種俗名(原始報告)`=="大鹿長節石蛾",corrected_name:=`物種學名(原始報告)`]
+nl_all[Level=="nomen nudum"]
+nl_all[`物種俗名(原始報告)`=="分叉鉤翅石蛾",
+       c(1:14):=unique(nl_all[genus=="Helicopsyche",1:14])]
+nl_all[Level=="nomen nudum",corrected_name:=`物種學名(原始報告)`]
+
+
+nl_all[`物種俗名(原始報告)`=="分叉鉤翅石蛾",
+       c(1:14):=unique(nl_all[genus=="Helicopsyche",1:14])]
+ a <- rgbif::occ_search(scientificName = "Micrasema",limit=1)
+dt <- data.table(a$hierarchy[[1]])
+rank <- dt$rank
+nl_all[`物種俗名(原始報告)`=="臺灣平脈石蛾",c(rank):=.(dt$name[1],
+                                         dt$name[2],dt$name[3],
+                                         dt$name[4],dt$name[5],
+                                         dt$name[6],dt$name[7])]
+write.csv(nl_all,paste0(data_path,"/result/name_list_insecta_數化資料_完整版.csv"))
+back_rdt_3 <- rdt
+rdt[,sp_id:=as.character(sp_id)]
+nl_all[duplicated(sp_id)]
+rdt <- nl_all[rdt,on=.(sp_id)]
+###補充表格
+colnames(rdt)
+rdt[,c("綱","分類階層","科名","物種學名","目名"):=
+              .(class,Level,family,corrected_name,order)]
+sv <- rdt[,c(55:78,42,43,52)]
+colnames(sv) <- gsub("^i.","",colnames(sv))
+write.csv(sv,paste0(data_path,"/result/database_insecta_數化資料_完整版.csv"))
+```
+
+
+
+
+
 
 ## Step 1.2 處理兩爬類資料
 ```{r}
@@ -365,7 +707,7 @@ rdt_all_name[,c("綱","科名","分類階層","物種學名"):=.(class,family,le
 #### 處理replaceND與family以上的分類群
 rdt_all_name[isReplaceND==1,"物種學名":=correct_name]
 rdt_all_name[level %in% c("order"),科名:="NULL"]
-
+write.csv(rdt_all_name,paste0(data_path,"/result/database_Actinop_數化資料.csv"))
 write.csv(n_list,paste0(data_path,"/result/name_list_Actinop_數化資料.csv"))
 rm(name_ch_2,name_ch_c,name_check_3,name_check_4,name_check)
 rm(rdt,rdt_all,rdt_all_name,ch_list,n_list)

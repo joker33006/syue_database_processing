@@ -20,6 +20,7 @@ library(writexl)
 library(stringr)
 library(showtext)#改變中文字型
 library(sf) #for gis
+library(dplyr)
 ```
 TWD97轉84 code
 ```{r}
@@ -145,6 +146,7 @@ length(grep(1,))
 grid$record_count <- lengths(st_intersects(grid, wkt_vec))
 plot(d)
 plot(d$科名)
+
 ```
 
 
@@ -222,11 +224,12 @@ nl_ins <- fread(paste0(data_path,"/result/name_list_insecta_數化資料_完整�
 nl_amp <- fread(paste0(data_path,"/result/name_list_Amphibia_數化資料.csv"))
 nl_act <- fread(paste0(data_path,"/result/name_list_Actinop_數化資料.csv"))
 nl_spnp <- fread(paste0(data_path,"/result/name_list_spnp_all.csv"))
-nl_n <-fread(paste0(data_path,"/result /name_list_國家資料庫.csv")) 
+nl_n <-fread(paste0(data_path,"/result/name_list_國家資料庫.csv")) 
 setnames(nl_ins,"Level","level")
 nl_amp[,name_code_source:="TaiCol"]
 nl_act[,name_code_source:="TaiCol"]
 nl_act[class=="Ostracoda"]
+
 nl_all <- rbind(nl_ins,nl_amp,nl_act,nl_spnp,nl_n,fill=TRUE)
 ###修正sp.錯誤
 colnames(nl_all)
@@ -385,7 +388,7 @@ lis_product[,c("name","family"):=.(gsub("NA ","",name),gsub("NA ","",family))]
 lis_product[,c("name","family"):=.(gsub(" NA","",name),gsub(" NA","",family))]
 lis_product[,c("name","family","order"):=
               .(gsub(" NULL","",name),gsub(" NULL","",family),gsub(" NULL","",order))]
-write.csv(lis_product,"/result/昆蟲魚貝兩爬_總學名.csv")
+write.csv(lis_product,paste0(path,"/result/昆蟲魚貝兩爬_總學名.csv"))
 ```
 ## 處理數化資料的空間資訊
 
@@ -416,6 +419,7 @@ db_a[id==9216&樣區編號==3,wkt:=wkt_9216[id==3,wkt]]
 wkt_8911 <- fread(paste0(data_path,"/processing/8911_wkt.csv"))
 db_a[id==8911&樣區編號==3,wkt:=wkt_8911[4,wkt]]
 db_a[id==8911&樣區編號==5,wkt:=wkt_8911[2,wkt]]
+db_a[id==8911&樣區編號==6,wkt:=wkt_8911[3,wkt]]
 ### 處理10605
 wkt_10605 <- fread(paste0(data_path,"/processing/10605_wkt.csv"))
 db_a[id==10605&!is.na(wkt),wkt:=wkt_10605[1,wkt]]
@@ -460,40 +464,123 @@ write.csv(db_a,paste0(path,"/result/db_all_backup_20221208_04.csv"))
 ### 檢查是否都是Y值
 unique(db_a[!is.na(X)&!grepl("^2\\d\\.",Y),])
 db_a[!is.na(Y)&!grepl("^2\\d\\.",Y),Y:=NA]
+db_a[物種學名=="Caeciliidae"]
 ###
 ```
-# 進入圖層合併
+# step.4進入圖層合併
 將資料merage到三通資料以及500網格裡面。
-
+還是在查找錯誤。
 ```{r}
 ###修正9706wkt原設定為加入z座標的，修正
 wkt_9706 <- fread(paste0(data_path,"/processing/wkt_9706.csv"))
-db_a[record_id==72746,wkt:=wkt_9706[1,wkt]]
+db_a[id==9706,wkt:=wkt_9706[1,wkt]]
 write.csv(db_a,paste0(path,"/result/db_all_backup_20221208_05.csv"))
 ###輩分
 dt_merage <- db_a
-
+### start from here
 wkt_tb <- dt_merage[!is.na(wkt)]
-unique(wkt_tb[,id])
-wkt_tb[1080]
+###查找有錯的wkt
+w_r <- NULL
+e_r <- NULL
 for (i in 1:nrow(wkt_tb)){
-  test <- st_as_sf(wkt_tb[i,],wkt="wkt",crs=4326)
+ r <- try(st_as_sf(wkt_tb[i,],wkt="wkt",crs=4326))
+ if (class(r) == "try-error"){
+   e_r <- c(e_r,i)
+ }
 }
-wkt_all <- st_as_sf(wkt_tb,wkt="wkt",crs=4326)
+unique(wkt_tb[(e_r),.(id,wkt,樣區編號)])
+
+###目前查到有問題的9706,8911,9501,9601,9701
+
+###9501,9601與9701資料為葉文斌老師收集，是登山沿線的蟲資料，沒有點位資料故先刪除
+wkt_tb <- wkt_tb[wkt!="POINT( )"]
+###處理9706，為Z屬性資料
+###為前面沒處理乾淨的資料
+###8911 看起來是自製的MultiLineString (121`,前面也有重新製作wkt，再由前面修正
+###在multiLine字串後應該有兩個括號
+unique(wkt_tb[(e_r),.(id,wkt,樣區編號)])
+
+wkt_tb <- wkt_tb[!is.na(wkt)]
+### 處理9006，X值錯誤,X值與Y值沒分開
+db_a[id==9006,X:=gsub("(^12\\d+\\.\\d+),.+","\\1",X)]
+
+###處理9212
+db_a[X=="121.204.6",X:=121.2046]
+
+```
+
+## 重新嘗試圖層合併
+```{r}
+p_all <- db_a[!is.na(X)]
+
+p_all[,X:=as.numeric(X)]
+p_all[,Y:=as.numeric(Y)]
+###產出計畫數量的sf
+
+wkt_pro <- unique(wkt_tb[,.(id,wkt)])
+p_pro <- unique(p_all[,.(id,X,Y)])
+wkt_pro_sf <- st_as_sf(wkt_pro,wkt="wkt",crs=4326)
+p_pro_sf <- st_as_sf(p_pro,coords = c("X","Y"),crs=4326)
+###產出魚類、爬蟲、兩生
+wkt_AAR <- wkt_tb[class %in% c("Amphibia","Reptilia","Actinopterygii")]
+p_AAR <- p_all[class %in% c("Amphibia","Reptilia","Actinopterygii")]
+wkt_AAR_sf <- st_as_sf(wkt_AAR,wkt="wkt",crs=4326)
+p_AAR_sf <- st_as_sf(p_AAR,coords = c("X","Y"),crs=4326)
+
+###
+wkt_sf <- st_as_sf(wkt_tb,wkt="wkt",crs=4326)
+p_sf <- st_as_sf(p_all,coords = c("X","Y"),crs=4326)
+
+####備份
+
 ## 讀入grid與三通圖
 grid <- st_read(paste0(data_path,"/layer/500m網格.gpkg"))
-n_rng <- st_read(paste0(data_path,"/layer/雪霸三通範圍.gpkg"))
-n_rng
-class(wkt_vec)
-class(grid)
-## 嘗試資料擷取
-d <- st_intersects(grid, wkt_vec)
-d <-  st_join(grid, wkt_vec)
-d
-length(grep(1,))
-grid$record_count <- lengths(st_intersects(grid, wkt_vec))
-plot(d)
-plot(d$科名)
+n_rng <- st_read(paste0(data_path,"/layer/雪霸三通範圍.gpkg"),crs=4326)
+## 計算資料筆數
+
+grid$record_count <- (lengths(st_intersects(grid, wkt_sf))+
+                        lengths(st_intersects(grid, p_sf)))
+n_rng$record_count <- (lengths(st_intersects(n_rng, wkt_sf))+
+                        lengths(st_intersects(n_rng, p_sf)))
+
+## 計算計畫數量(計畫數量必須改變算法)
+##製作function,major_layer為主要圖層(500網格或三通)，另外兩個分別是點位與wkt圖層
+pro_count <- function(major_layer,comb_layer_1,comb_layer_2){
+  cmb_1 <- st_join(major_layer,comb_layer_1)
+  count_1 <- as.data.table(cmb_1[,c("id.x","id.y")])
+  cmb_2 <- st_join(major_layer,comb_layer_2)
+  count_2 <- as.data.table(cmb_2[,c("id.x","id.y")])
+  c_all <- rbind(count_1,count_2)  
+  c_all[,geom:=NULL]
+  s1 <- c_all[!duplicated(c_all)][,.(project_n=.N),by=id.x]
+  colnames(s1)[1] <- "id"
+  s2 <- merge(major_layer,s1,by="id",all.x=TRUE)
+  return(s2)
+  }
+###完成計算function
+######計算project數量
+##網格
+rm(test,test_2)
+grid <- pro_count(grid,wkt_pro_sf,p_pro_sf)
+n_rng$id <- 1:nrow(n_rng)
+n_rng <- pro_count(n_rng,wkt_pro_sf,p_pro_sf)
+
+
+##魚類、爬蟲、兩生
+grid$AAR_count <- (lengths(st_intersects(grid, wkt_AAR_sf))+
+                        lengths(st_intersects(grid, p_pro_sf)))
+n_rng$AAR_count <- (lengths(st_intersects(n_rng, wkt_pro_sf))+
+                        lengths(st_intersects(n_rng, p_pro_sf)))
+sum(unique(grid$record_count))
+n_test <- as.data.table(n_rng)
+n_test[project_n==1,project_n:=0]
+n_test[,label_pro_n:=paste0(label," (",project_n,"筆)")]
+n_test[,label_record_n:=paste0(label," (",record_count,"筆)")]
+n_test[,label_AAR_n:=paste0(label," (",AAR_count,"筆)")]## 輸出資料
+n_test <- st_as_sf(n_test,crs=4326)
+
+st_write(grid,paste0(path,"/result/grid_500_昆蟲魚貝兩爬統計_2.gpkg"))
+st_write(n_test,paste0(path,"/result/三通範圍_昆蟲魚貝兩爬統計_3.gpkg"))
 ```
 
 

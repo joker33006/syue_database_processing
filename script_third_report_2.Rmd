@@ -9,6 +9,7 @@ output: html_notebook
 library(data.table)
 library(stringr)
 library(readxl)
+library(readr)
 path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/第三次期中報告"
 data_path <- "E:/雪霸報告統整"
 ```
@@ -38,11 +39,20 @@ spnp_pl <- spnp[class %in% c("Magnoliopsida","Pinopsida",
                               "Equisetopsida","Liliopsida",
                               "Lycopodiopsida","Bryopsida",
                               "Jungermanniopsida")]
+
+### 修正中文名錯誤
+spnp_pl[`物種學名(原始報告)`=="Gentiana atkinsonii formosana",
+        `物種俗名(原始報告)`:="臺灣龍膽"]
+spnp_pl[`物種學名(原始報告)`=="Gentiana arisanensi",
+        `物種俗名(原始報告)`:="阿里山龍膽"]
+spnp_pl[`物種學名(原始報告)`=="Anaphalis margaritacea morrisonicola",
+        `物種俗名(原始報告)`:="玉山抱莖籟簫"]
 ### 將資料切分成名錄所需以及database
 spnp_list <- spnp_pl[,.(phylum,class,order,family,scientificName,vernacularName)]
 spnp_list <- unique(spnp_list)
 colnames(spnp_pl)
 spnp_pl <- spnp_pl[,33:50]
+
 write.csv(spnp_pl,paste0(path,"/result/data_base/database_prim_spnp_old_data.csv"))
 write.csv(spnp_list,paste0(path,"/result/name_list/name_list_prim_spnp_old_data.csv"))
 
@@ -130,19 +140,32 @@ dig_data <-lapply(dig_data,function(x){
 dig_data_all <- rbindlist(dig_data,fill=TRUE)
 dig_data_all[生物分群=="植物",生物分群:="植物類"]
 dig_data_all[生物分群=="真菌",生物分群:="真菌類"]
+dig_data_all[`物種俗名(原始報告)`=="蓮草",
+             `物種俗名(原始報告)`:="蓪草"]
+
+dig_data_all[`物種俗名(原始報告)`=="初島氏柱薑",
+             `物種俗名(原始報告)`:="初島氏柱薹"]
+dig_data_all[`物種俗名(原始報告)`=="大穗日本薑",
+             `物種俗名(原始報告)`:="大穗日本薹"]
+dig_data_all[`物種俗名(原始報告)`=="雙鋸葉玄森參",
+             `物種俗名(原始報告)`:="雙鋸葉玄參"]
 unique(dig_data_all[,生物分群])
 dig_name_list <- unique(dig_data_all[,.(生物分群,`物種俗名(原始報告)`)])
+write.csv(dig_data_all,paste0(path,"/result/data_base/dig_database.csv"))
 write.csv(dig_name_list,paste0(path,"/result/name_list/dig_namelist.csv"))
 rm(dig_data)
 ```
 ## 1.5 處理整合後的學名
 將中文名與TaiCol中文名比對，並以accept code 作為合併依據
 ```{r}
+### 先處理植物學名
 o_list <- fread(paste0(path,"/result/name_list/其他報告名錄整合.csv"))
-dig_name_list <- fread(paste0(path,"/result/name_list/dig_namelist.csv"))
+dig_name_list <- fread(paste0(path,"/result/name_list/dig_namelist.csv"),header = T)
 
 colnames(dig_name_list)[2:3] <- c("class","species")
+dig_name_list <- dig_name_list[class=="植物類"]
 colnames(n_list) <- c("speceis_org","sci_name_org","tai_code")
+
 colnames(spnp_list)
 setnames(spnp_list,"vernacularName","name")
 ## ntb的資料本身有taicol的編號，故另外處理
@@ -151,7 +174,7 @@ t_nl <- unique(t_nl)
 ### 載入taicol名錄
 taicol <- fread(paste0(path,"/rawdata/名錄_TaiCol/TaiCOL_name_20230325.csv"),
                 encoding="UTF-8")
-colnames(taicol)
+### 學名合併
 n_check <- taicol[usage_status=="accepted",.(common_name_c,rank,taxon_id)][t_nl,
                 on=.(common_name_c=species_r)]
 n_check <- n_check[common_name_c!=""]
@@ -162,6 +185,7 @@ t_nl[grep("台灣",species_r),r_sp_n:=gsub("台灣","臺灣",r_sp_n)]
 t_nl[grep("莢<U\\+84BE>",species_r),r_sp_n:=gsub("莢<U\\+84BE>","莢蒾",r_sp_n)]
 t_nl[grep("莢迷",species_r),r_sp_n:=gsub("莢迷","莢蒾",r_sp_n)]
 t_nl[,r_sp_n:=gsub("莢蒾迷","莢蒾",r_sp_n)]
+t_nl[,r_sp_n:=gsub("葉莢$","莢蒾",r_sp_n)]
 t_nl[grep("菝",species_r),r_sp_n:=gsub("菝.","菝葜",r_sp_n)]
 t_nl[grep("菝<U\\+845C>",species_r),r_sp_n:=gsub("菝葜U\\+845C>","菝葜",r_sp_n)]
 t_nl[grep("拔契",species_r),r_sp_n:=gsub("拔契","菝葜",r_sp_n)]
@@ -172,8 +196,10 @@ t_nl[,r_sp_n:=gsub("水苦$","水苦蕒",r_sp_n)]
 t_nl[,r_sp_n:=gsub("水苦.","水苦蕒",r_sp_n)]
 t_nl[,r_sp_n:=gsub("<U\\+00A0>","",r_sp_n)]
 t_nl[grep("-",species_r),r_sp_n:=gsub("-","",r_sp_n)]
-#### 加入文字對應
-
+t_nl[,r_sp_n:=gsub("<U\\+9EC4>","黃",r_sp_n)]
+t_nl[,r_sp_n:=gsub(";.*","",r_sp_n)]
+t_nl[,r_sp_n:=gsub("<U\\+6964>","楤",r_sp_n)]
+t_nl[,r_sp_n:=gsub("禾本科\\d","禾本科",r_sp_n)]
 ### 重新比對學名
 n_check <- taicol[usage_status=="accepted",.(common_name_c,rank,taxon_id)][t_nl,
                 on=.(common_name_c=r_sp_n)]
@@ -181,5 +207,234 @@ n_check <- n_check[common_name_c!=""]
 unknow_n <- n_check[is.na(taxon_id)]
 
 writexl::write_xlsx(unknow_n,paste0(path,"/result/name_list/name_recheck.xlsx"))
+### 再次讀入手動查詢後的資料，再次比對學名
+unknow_n <- as.data.table(read_xlsx(paste0(path,"/result/name_list/name_recheck.xlsx"),sheet = 1))
+### 把"蘚"換成"苔"後再次比對
+bry <- unknow_n[物種編碼==0,"common_name_c":=gsub("蘚","苔",common_name_c)][
+  物種編碼==0]
+bry_ncode<- taicol[usage_status=="accepted",.(common_name_c,rank,taxon_id)][
+  bry,on=.(common_name_c)]
+###　再次輸出並手動查詢
+writexl::write_xlsx(bry_ncode,paste0(path,"/result/name_list/name_recheck_bra.xlsx"))
+
+
+```
+
+## 1.6 處理數化資料中的蘚苔與真菌類
+```{r}
+bra_list <-unique(dig_data_all[生物分群!="植物類",.(`物種俗名(原始報告)`,`物種學名(原始報告)`)])
+### 輸出手動處理
+writexl::write_xlsx(bra_list,paste0(path,"/result/name_list/name_recheck_not_plant.xlsx"))
+rm(bra_list)
+
+```
+## 1.7 處理國家資料庫
+
+```{r}
+ntb_plan_code <- taicol[usage_status=="accepted",.(simple_name,taxon_id)][
+  ntb_plan, on=.(simple_name=`物種學名(原始報告)`)]
+ntb_n_check <- unique(ntb_plan_code[is.na(taxon_id),.(simple_name,`物種俗名(原始報告)`)])
+### 手動查詢
+writexl::write_xlsx(ntb_n_check,paste0(path,"/result/name_list/ntb_n_check.xlsx"))
+### 重新載入已修正之名錄
+ntb_n_check <- as.data.table(read_xlsx(paste0(path,                                        "/result/name_list/對照名錄/ntb_n_check_corrected.xlsx")))
+### 合併名錄_code
+ntb_nlist <- rbind(taicol[usage_status=="accepted",
+                          .(simple_name,taxon_id)],
+                   ntb_n_check[,.(simple_name,taxon_id)])
+ntb_plan_code <- ntb_nlist[ntb_plan,
+                          on=.(simple_name=`物種學名(原始報告)`)] ntb_plan_code[is.na(taxon_id)]
+
+
+```
+
+## 1.8 合併名錄
+```{r}
+###在此之前已手動將非植物類的名錄與已修正的check_name合併
+###載入check_name並與原先的n_list合併
+unknow_n <- as.data.table(read_xlsx(paste0(path,"/result/name_list/對照名錄/name_recheck_corrected.xlsx"),sheet = 1))
+colnames(unknow_n)
+setnames(unknow_n,"物種編碼","toxan_id")
+fin_n_check <- n_check[!is.na(taxon_id)]
+fin_n_check[,note:=NA][,rank:=NULL]
+fin_n_check <- rbind(fin_n_check,unknow_n,use.names=FALSE)
+rm(dig_name_list,bry,bry_ncode,unknow_n)
+```
+
+## 1.9 合併資料庫
+先合併數化資料以及spnp_pl
+```{r}
+### 重新讀入data_base
+spnp_pl <- fread(paste0(path,"/result/data_base/database_prim_spnp_old_data_corrected.csv"))
+dig_data_all <- fread(paste0(path,"/result/data_base/dig_database.csv"))
+spnp_pl[,調查年:=as.character(調查年)][,調查日期:=as.character(調查日期)]
+spnp_pl[,source:="spnp_database"]
+### 處理spnp_pl中的物種階層問題
+spnp_pl[grep("Family",`物種學名(原始報告)`),分類階層:="Family"]
+spnp_pl[grep("sp\\.",`物種學名(原始報告)`),分類階層:="Genus"]
+
+### 處理spnp_pl中有個虎婆刺沒有俗名的部分
+spnp_pl[`物種俗名(原始報告)`=="",`物種俗名(原始報告)`:="虎婆刺"]
+###處理dig_data的V1
+dig_data_all[,V1:=NULL]
+dig_data_all[,source:="report_digitization"]
+### 合併數化與spnp資料庫
+al_data <- rbind(dig_data_all,spnp_pl,fill =TRUE)
+### 刪除9913多的資料
+al_data <- al_data[!(id==9913&is.na(`物種俗名(原始報告)`))]
+al_data[,data_id:=1:nrow(al_data)]
+al_data[,V1:=NULL]
+### 取代<U\\+845C>"為"葜"
+al_data[,`物種俗名(原始報告)`:=gsub("<U\\+845C>","葜",`物種俗名(原始報告)`)]
+
+###與名錄結合，注意note中org項目要使用原有的中文名
+al_data_code <- fin_n_check[,.(species_r,taxon_id,note)][al_data,
+                        on=.(species_r=`物種俗名(原始報告)`),allow.cartesian=TRUE]
+###
+al_data_code[is.na(taxon_id)]
+
+al_data_code <- al_data_code[duplicated(data_id)==FALSE]
+setnames(al_data_code,"species_r","物種俗名(原始報告)")
+### 與ntb_plan_code 合併
+#### 先處理好ntb_plan
+colnames(ntb_plan_code)[1] <- "物種學名(原始報告)"
+colnames(ntb_plan_code)
+ntb_plan_code[,TaiCoL物種代碼:=NULL]
+ntb_plan_code[座標是否有模糊化=="TRUE",備註:=paste0(備註,";座標模糊化")]
+ntb_plan_code[grep("^;",備註),備註:=gsub(";","",備註)]
+ntb_plan_code[,座標是否有模糊化:=NULL]
+ntb_plan_code[,note:=NA][,measurementValue:=NA]
+ntb_plan_code[,調查日期:=as.character(調查日期)]
+colnames(ntb_plan_code)[5] <- "調查日期"
+colnames(ntb_plan_code)[14] <- "調查方法"
+colnames(ntb_plan_code)[21] <- "數量"
+colnames(ntb_plan_code)[22] <- "數量單位"
+colnames(ntb_plan_code)[23] <- "備註"
+ntb_plan_code[,source:="NP_Database"]
+#### 處理al_data_code
+al_data_code[,data_id:=NULL]
+al_data_code[,門:=NULL]
+### 資料整合
+td <- rbind(ntb_plan_code,al_data_code)
+unique(td[is.na(調查方法),.(id,source)])
+### 補上9411 與9710的調查法
+td[id==9411,調查方法:="穿越線"]
+td[id==9710&is.na(調查方法),調查方法:="樣區法"]
+```
+# 2.處理整合後的資料庫
+## 2.1 結合學名並完善資料庫
+```{r}
+#back_up_td <- td
+### 讀入GBif_list
+gBif_list <- read_xlsx(paste0(path,"/result/name_list/對照名錄/GBIF_name_list.xlsx"))%>% as.data.table()
+
+### 先合併tai_code 學名
+td_name <- taicol[usage_status=="accepted"][td,on=.(taxon_id)]
+td_name[!is.na(name_id),c("綱","綱中文","科名","科俗名","物種俗名","物種學名"):=
+          .(class,class_c,family,family_c,common_name_c,simple_name)]
+
+
+### 取出製作資料庫之資料
+td_2 <- td_name[,.(taxon_id,id,調查年,調查日期,綱,綱中文,X,Y,wkt,座標系統,位置誤差,樣區編號,調查方法,分類階層,`科名(原始報告)`,科名,科俗名,`物種俗名(原始報告)`,物種俗名,`物種學名(原始報告)`,物種學名,生活史,數量,數量單位,備註,note,measurementValue,source)]
+colnames(td_name)
+name_list_1 <- unique(td_name[!is.na(name_id),c(1,3:4,21:22,24:26,33:34,37:48)])
+### 結合GBif資料
+gBif_list[,key:=as.character(key)]
+td_2[,data_id:=1:nrow(td_2)]
+td_2_name <- gBif_list[td_2,on=.(key=taxon_id)]
+td_2_name <- td_2_name[duplicated(data_id)==FALSE]
+colnames(td_2_name)
+setnames(td_2_name,"key","taxon_id")
+td_2_name[!is.na(rank),c("分類階層","綱","科名","物種俗名","物種學名"):=
+          .(rank,class,family,`物種俗名(原始報告)`,canonicalName)]
+td_3 <- td_2_name[,.(id,調查年,調查日期,綱,綱中文,X,Y,wkt,座標系統,位置誤差,樣區編號,調查方法,分類階層,`科名(原始報告)`,科名,科俗名,`物種俗名(原始報告)`,物種俗名,`物種學名(原始報告)`,物種學名,taxon_id,生活史,數量,數量單位,備註,note,measurementValue,source)]
+###　處理note為org的資料
+td_3[grep("org",note)]
+td_3[grep("org",note),物種俗名:=gsub("蘚","苔",物種俗名)]
+td_3[,物種俗名:=gsub("台灣","臺灣",物種俗名)]
+td_3[物種俗名=="粗對齒?",物種俗名:="粗對齒蘚"]
+
+write_excel_csv(td_3,paste0(path,"/result/data_base/total_plant_database.csv"))
+```
+
+## 2.2 學名產製
+利用當前的資料庫，以及`fin_n_check`(當中含有純名錄資料)先產製name_code，再結合taicol與GBif資料
+
+```{r}
+### 合併名錄
+total_name_list <- unique(td_3[,.(taxon_id,物種俗名,note)])
+setnames(total_name_list,"物種俗名","common_name_c")
+t_list <- rbind(total_name_list,
+                fin_n_check[,.(taxon_id,common_name_c,note)]) %>% unique()
+### 合併名錄與taicol
+t_list <- taicol[t_list,on=.(taxon_id)]
+list_1 <- t_list[!is.na(name_id)]
+list_1 <- list_1[duplicated(taxon_id)==FALSE]
+
+### 合併GBIF名錄
+list_2 <-gBif_list[t_list[is.na(name_id),.(taxon_id,i.common_name_c)],
+                   on=.(key=taxon_id)] %>% unique()
+list_2 <- list_2[duplicated(key)==FALSE]
+### 合併TaiCol與GBIF資料
+setnames(list_1,"i.common_name_c","org_name")
+setnames(list_2,"i.common_name_c","org_name")
+setnames(list_2,"species","simple_name")
+### 處理taiCol資料有些沒有命名者的問題
+###　載入舊taicol資料
+od_taicol <- fread(paste0(path,"/result/name_list/TaiwanSpecies_taicol_old_database.csv"),encoding = "UTF-8")
+
+list_1[grep("var",simple_name)]
+list_1[,match_name:=gsub("(var\\. |subsp\\. |fo\\. )","",simple_name)]
+list_1[rank %in% c("Species","Variety","Subspecies","Form")& name_author==""]
+list_1_author <- od_taicol[,.(name,author,author2)][list_1,on=.(name=match_name)]
+
+### 處理單純種階層+命名者
+list_1_author[,scientificName:=NA]
+list_1_author[rank %in% c("Species"),scientificName:=paste0(simple_name," ",author)]
+### 處理沒有author2的變種、亞種與型
+list_1_author[rank %in% c("Variety","Subspecies","Form")& author2=="NULL",
+              scientificName:=paste0(simple_name," ",author)]
+### 處理沒有author的變種、亞種與型
+list_1_author[rank %in% c("Variety","Subspecies","Form")& 
+                author2!="NULL"& 
+                author=="NULL",
+              scientificName:=paste0(simple_name," ",author2)]
+### 處理特殊案例
+list_1_author[grep(" \\S+ \\S+ \\S+",name)]
+### 同時有亞種與變種的情況
+#### 由於特殊案例(深紅茵芋與台灣山酢漿草)，直接把學名放進去
+list_1_author[simple_name=="Oxalis acetosella subsp. griffithii var. formosana",
+              scientificName:="Oxalis acetosella L. subsp. griffithii (Edgew. & Hook f.) Hara var. formosana (Terao) Huang & Huang"]
+list_1_author[name=="Skimmia japonica distincte-venulosa orthoclada",
+              scientificName:="Skimmia japonica Thunb. ssp. distincte-venulosa (Hayata) Ho var. orthoclada (Hayata) Ho"]
+### 處理剩下的變種、亞種與型
+#### 先將變種名之前的命名者加入
+#### 由於資料必須分兩步驟加入命名者，為了可以查找到資料，新增標籤
+list_1_author[is.na(scientificName),sci_name_deal:=0]
+#### 先加入第一個命名者
+list_1_author[rank %in% c("Variety","Subspecies","Form")& 
+                author2!="NULL"& 
+                author!="NULL"&
+                is.na(scientificName),
+              scientificName:=str_replace(simple_name,"(var\\.|subsp\\.|fo\\.)",
+                             paste0(author," \\1"))]
+#### 加入第二個命名者
+list_1_author[rank %in% c("Variety","Subspecies","Form")& 
+                author2!="NULL"& 
+                author!="NULL"&
+                sci_name_deal==0,
+              scientificName:=paste0(scientificName," ",author2)]
+              
+## 檢查是否有未填入的資料
+### 發現結果都是承名變種
+list_1_author[rank %in% c("Species","Variety","Subspecies","Form") &
+                is.na(scientificName),
+              scientificName:=str_replace(simple_name,"(var\\.|subsp\\.|fo\\.)",
+                             paste0(name_author," \\1"))]
+
+### 結合list_1與list_2
+fin_al_list <- rbind(list_1_author,list_2,fill=TRUE)
+### 輸出name_list，使用名錄排版程式處理排版與產出
+write_excel_csv(fin_al_list,paste0(path,"/result/name_list/total_name_list.csv"))
 ```
 

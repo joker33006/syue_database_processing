@@ -329,6 +329,8 @@ td[id==9710&is.na(調查方法),調查方法:="樣區法"]
 gBif_list <- read_xlsx(paste0(path,"/result/name_list/對照名錄/GBIF_name_list.xlsx"))%>% as.data.table()
 
 ### 先合併tai_code 學名
+td[`物種俗名(原始報告)`=="暗藍變種鋼色",taxon_id:="t0057326"]
+
 td_name <- taicol[usage_status=="accepted"][td,on=.(taxon_id)]
 td_name[!is.na(name_id),c("綱","綱中文","科名","科俗名","物種俗名","物種學名"):=
           .(class,class_c,family,family_c,common_name_c,simple_name)]
@@ -379,6 +381,7 @@ list_2 <- list_2[duplicated(key)==FALSE]
 setnames(list_1,"i.common_name_c","org_name")
 setnames(list_2,"i.common_name_c","org_name")
 setnames(list_2,"species","simple_name")
+setnames(list_2,"key","taxon_id")
 ### 處理taiCol資料有些沒有命名者的問題
 ###　載入舊taicol資料
 od_taicol <- fread(paste0(path,"/result/name_list/TaiwanSpecies_taicol_old_database.csv"),encoding = "UTF-8")
@@ -431,10 +434,72 @@ list_1_author[rank %in% c("Species","Variety","Subspecies","Form") &
                 is.na(scientificName),
               scientificName:=str_replace(simple_name,"(var\\.|subsp\\.|fo\\.)",
                              paste0(name_author," \\1"))]
+###處理list_1_author沒有kingdom的部分
+#### 利用屬名產製其他上位分類階層的資料
 
+genus_database <- unique(od_taicol[is_accepted_name==1,c(1:10,13:14)])
+test <- genus_database[list_1_author[kingdom=="",.(latin_genus,taxon_id)],on=.(genus=latin_genus)]
+test <- test[-8]
+list_1[kingdom==""]
+list_1_author[kingdom=="",no_king:=1]
+list_1_author[kingdom=="",40:51] <- test[,1:12]
+list_1_author[no_king==1]
+rm(genus_database,test)
+list_1_author[,no_king:=NULL][,sci_name_deal:=NULL]
+#### 處理屬
+list_1_author[is.na(scientificName)&rank=="Genus",scientificName:=paste0(name," sp.")]
+#### 處理科
+colnames(list_1_author)
+list_1_author[is.na(scientificName)&rank=="Family",
+              c("family","family_c"):=.(name,common_name_c)]
+#### 處理門
+list_1_author[is.na(scientificName)&rank=="Phylum",
+              c("phylum","phylum_c"):=.(name,common_name_c)]
+list_1_author[is.na(scientificName)&rank=="Family",]
 ### 結合list_1與list_2
 fin_al_list <- rbind(list_1_author,list_2,fill=TRUE)
+### 移除無用資料
+fin_al_list <- fin_al_list[taxon_id!="delete"]
+### 處理gbif資料沒有中文名的問題
+gbf <- fin_al_list[!grep("^t",taxon_id),.(family,taxon_id)]
+fam_list <- unique(taicol[usage_status=="accepted",37:46])
+gbf_2 <- fam_list[gbf,on=.(family)]
+fin_al_list[(rank=="SPECIES")&!(family %in% c("Lachnaceae","Lachnaceae","Cleveaceae")),40:49] <- gbf_2[!is.na(family_c),1:10]
+fin_al_list[(rank=="SPECIES")&(org_name!="Acaulospora rehmii"),
+            common_name_c:=org_name]
+
 ### 輸出name_list，使用名錄排版程式處理排版與產出
 write_excel_csv(fin_al_list,paste0(path,"/result/name_list/total_name_list.csv"))
+
+
 ```
+## 2.3 重新結合學名
+ 在整理名錄時發現可能有些資料有錯，故使用整理好的學名重新與資料結合。
+
+```{r}
+n_list <- fread(paste0(path,"/result/name_list/third_report_total_list.csv"),encoding = "UTF-8")
+colnames(n_list)
+n_list[,no_author:=NULL]
+
+n_list[is.na(scientificName)]
+
+db <- fread(paste0(path,"/result/data_base/total_plant_database.csv"),
+            encoding ="UTF-8" )
+###處理t0035569替換成t0057326的問題
+db[taxon_id=="t0035569",taxon_id:="t0057326"]
+db_2 <- n_list[,c(1,4,7:8,17:28,31)][db,on=.(taxon_id)]
+db_2[,c("綱","綱中文","科名","科俗名"):=
+          .(class,class_c,family,family_c)]
+db_2[,物種學名:=scientificName]
+db_2[is.na(物種學名)]
+db_2[物種俗名==""&common_name_c!="",物種俗名:=common_name_c]
+db_2[,分類階層:=rank]
+### 重建生物分群
+db_2[,生物分群:=kingdom_c]
+db_2[taxon_id=="t0061783",生物分群:="動物界"]
+colnames(db_2)
+db_3 <- db_2[,c(18:20,45,20:36,2,37:43)]
+write_excel_csv(db_3,paste0(path,"/result/data_base/total_plant_database_update_20230612.csv"))
+```
+
 

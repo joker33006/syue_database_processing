@@ -787,6 +787,7 @@ wl_t[,c("id","調查年","調查日期","生物分群",
          family,NA,chinese,scientific_name,NA,
          body_length,individual_count,"個體數",NA)]
 colnames(wl_t)
+
 write.csv(wl_t[,37:58],paste0(data_path,"/result/database_prim_wl.csv"))
 write.csv(unique(wl_t[,.(class,family,scientific_name,chinese)]),
           paste0(path,"/result/name_list_prim_wl.csv"))
@@ -820,7 +821,7 @@ ntb_database <- ntb[,c("id","調查年","調查日期","生物分群",
         "物種學名","生活史","數量","數量單位",
         "備註","座標是否有模糊化","TaiCoL物種代碼")]
 unique(ntb_database[,綱])
-n_list <- ntb[,.(中文俗名,學名,TaiCoL物種代碼)]
+
 colnames(ntb)
 write.csv(ntb_database,paste0(data_path,"/result/database_prim_國家公園資料庫.csv"))
 write.csv(unique(n_list) ,paste0(data_path,"/result/name_list_prim_國家公園資料庫.csv"))

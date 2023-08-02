@@ -1,0 +1,167 @@
+---
+title: "Script for the third report_3"
+output: html_notebook
+---
+# 概述
+統計與作圖。統計資料筆數、分類群數量等相關資料之分析與作圖
+# 0. package
+
+```{r}
+library(data.table)
+library(stringr)
+library(ggplot2)
+library(ggbreak)#for axis break
+
+library(showtext)#改變中文字型
+library(readr)
+path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/第三次期中報告/"
+```
+# 1. 記錄資料統計
+```{r}
+## 載入資料庫與總名錄
+rdt <- fread(paste0(path,"result/data_base/third_report_Database_coordinate_corrected_20230616.csv"),encoding = "UTF-8")
+nlist <- fread(paste0(path,"result/name_list/third_report_total_list.csv"),encoding = "UTF-8")
+### 移除掉動物以及名為`蕨(unknow)`的資料
+rdt <- rdt[!(生物分群=="動物界"|taxon_id=="delete")]
+
+### 統計分類群的紀錄數量
+rdt_tax <- rdt[,.(id,調查年,taxon_id)]
+rdt_tax <- nlist[rdt_tax,on=.(taxon_id)]
+rdt_tax[is.na(rank)]
+rdt_tax[rank=="Family",]
+colnames(rdt_tax)
+rdt_tax_count <- rdt_tax[,.N,by=.(kingdom,kingdom_c,phylum,phylum_c,class,class_c)]
+write.csv(rdt_tax_count,paste0(path,"result/紀錄筆數_分類群統計表.csv"))
+### 統計資料之分類階層
+rank <- rdt_tax[,.N,by=.(kingdom,kingdom_c,phylum,phylum_c,class,class_c,rank)]
+rank <- dcast(rank,kingdom+kingdom_c+phylum+phylum_c+class+class_c~rank,value.var = c("N"))
+
+write.csv(rank,paste0(path,"result/資料筆數_分類階層統計.csv"))
+```
+# 2. 分類群統計
+```{r}
+nlist[class_c=="木蘭綱",class_c:="木蘭植物綱"]
+### 處理到鑑定到屬的沒有屬名的問題
+nlist[rank=="Genus",c("genus","genus_c"):=.(simple_name,common_name_c)]
+nlist[rank=="Genus"]
+### 處理資料是空白的問題
+nlist[!is.na(genus)&class=="",(21:28):=NA]
+### 存檔
+write_excel_csv(nlist,paste0(path,"result/name_list/third_report_total_list_20230618_update.csv"))
+
+### 統計rank
+nlist[,.N,by=.(rank)]
+nlist[rank %in% c("Species","Subspecies","Variety","Form"),scientificName] %>% unique()%>% length()
+###
+total_tax_n <- nlist[,.(kingdom,phylum,class,order,family,genus,scientificName)]
+total_tax_n[!grepl(" sp\\.",scientificName)&!is.na(scientificName),sp_c:=1]
+
+stat_sp <- total_tax_n[,.(sp_N=sum(sp_c,na.rm = TRUE)),
+                     by=.(kingdom,phylum,class,order,family,genus)]
+stat_sp[!is.na(genus)&genus!="",g_n:=1]
+stat_g <- stat_sp[,.(g_n=sum(g_n,na.rm = TRUE),sp_N=sum(sp_N,na.rm = TRUE)),
+                     by=.(kingdom,phylum,class,order,family)]
+stat_g[!is.na(family),f_n:=1]
+stat_f<- stat_g[,.(f_n=sum(f_n,na.rm = TRUE),
+                   g_n=sum(g_n,na.rm = TRUE),
+                   sp_N=sum(sp_N,na.rm = TRUE)),
+                     by=.(kingdom,phylum,class,order)]
+stat_f[!is.na(order),o_n:=1]
+stat_o<- stat_f[,.(o_n=sum(o_n,na.rm = TRUE),
+                    f_n=sum(f_n,na.rm = TRUE),
+                   g_n=sum(g_n,na.rm = TRUE),
+                   sp_N=sum(sp_N,na.rm = TRUE)),
+                     by=.(kingdom,phylum,class)]
+rm(stat,stat_f,stat_g,stat_sp)
+write.csv(stat_o,paste0(path,"result/分類群統計表.csv"))
+```
+# 3. 種源與紅皮書
+```{r}
+colnames(nlist)
+### 統計物種來源
+nlist[phylum=="Tracheophyta"&is.na(source)]
+source_n <- nlist[phylum=="Tracheophyta"&rank %in% c("Species","Subspecies",
+                                                      "Variety","Form"),
+                  .N,by=.(source,class,class_c)]
+source_n <- dcast(source_n,class+class_c~source,value.var = c("N"))
+write.csv(source_n,paste0(path,"result/來源統計_維管束植物門.csv"))
+### 紅皮書植物
+nlist[phylum=="Tracheophyta"&is.na(source)]
+unique(nlist$redlist)
+redlist_n <- nlist[phylum=="Tracheophyta"&rank %in% c("Species","Subspecies",
+                                                      "Variety","Form"),
+                  .N,by=.(redlist,class,class_c)]
+redlist_n <- dcast(redlist_n,class+class_c~redlist,value.var = c("N"))
+write.csv(redlist_n,paste0(path,"result/紅皮書等級統計_維管束植物門.csv"))
+nlist$redlist %>% unique()
+redlist_name <- nlist[redlist %in% c("NNT","NVU","NEN","NCR","NRE"),
+                      .(class_c,family,family_c,common_name_c,redlist)]
+redlist_name[,redlist:=sub("^N","",redlist)]
+write.csv(redlist_name,paste0(path,"result/紅皮書等級物種表_維管束植物門.csv"))
+
+```
+# 4 資料筆數與計畫數與時間
+```{r}
+## 處理資料年分
+
+rdt_stat_year <- rdt[,.(id,調查年,生物分群,綱,綱中文)]
+rdt_stat_year[,year:=as.numeric(str_extract(調查年,"^\\d{4}"))]
+## 刪除掉1900的資料
+rdt_stat_year <- rdt_stat_year[(year!=1900)]
+
+
+## 統計年計劃案量
+
+st_pro <- unique(rdt_stat_year[,.(year,id,生物分群)])
+st_pro <- st_pro[,.N,by=.(year,生物分群)]
+rdt_stat_year[year==2004&生物分群=="真菌界",id]%>% unique()
+showtext_auto()
+showtext_opts(dpi=600)
+ggplot(st_pro,aes(x=year,y=N,fill=生物分群))+
+  geom_col(color="gray40",alpha=0.8)+
+  labs(x="年份",y="研究計畫數量")+
+  theme_bw()+
+  scale_y_continuous(breaks =seq(2,14,2))+
+  scale_fill_brewer(palette="Spectral")+
+  theme(text=element_text(family="source-han-sans-tw",size=14))#+
+
+
+ggsave(paste0(path,"/result/plot/逐年研究案_total.jpeg"),width=8,height=4,dpi=600)
+## 統計年資料量
+
+st_year <- rdt_stat_year[,.N,by=.(year)]
+
+showtext_auto()
+showtext_opts(dpi=600)
+ggplot(st_year,aes(x=year,y=N))+
+  geom_col(alpha=0.8,fill="#EBAB3D")+
+  scale_y_break(breaks=c(4000,8000),scales = 0.3)+
+  labs(x="年份",y="資料筆數")+
+  theme_bw()+
+  theme(text=element_text(family="source-han-sans-tw",size=14))#+
+
+
+ggsave(paste0(path,"/result/plot/逐年資料筆數_植物類_total.jpeg"),width=8,height=4,dpi=600)
+
+## 統計非維管束植物的年資料量
+unique(rdt_stat_year$綱中文)
+st_novp_year <- rdt_stat_year[!(綱中文 %in% 
+                                c("石松綱","木蘭植物綱",
+                                    "松綱","水龍骨綱")),
+                         .N,by=.(year,生物分群)]
+
+st_novp_year[生物分群=="植物界",生物分群:="植物界(非維管束植物)"]
+
+showtext_auto()
+showtext_opts(dpi=600)
+ggplot(st_novp_year,aes(x=year,y=N,fill=生物分群))+
+  geom_col(color="gray40",alpha=0.8)+
+  scale_fill_brewer(palette="Spectral")+
+  labs(x="年份",y="資料筆數")+
+  theme_bw()+
+  theme(text=element_text(family="source-han-sans-tw",size=14))#+
+
+
+ggsave(paste0(path,"/result/plot/逐年資料筆數_非維管束植物_total.jpeg"),width=8,height=5,dpi=600)
+```
+

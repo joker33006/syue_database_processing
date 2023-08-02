@@ -10,12 +10,226 @@ output: html_notebook
 ## Step 0 package
 ```{r}
 library(data.table)
+library(magrittr)
 library(stringr)
 library(sf) #for gis
+
+path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/第三次期中報告/"
+
+
 ```
 ## 1. 資料檢查
 ### 1.1 座標系統檢查
 ```{r}
+dt <- fread(paste0(path,"/result/data_base/total_plant_database_update_20230612.csv"),encoding = "UTF-8")
+#### 座標系統
+unique(dt[,座標系統])
+#### 座標系統下拉未固定"8801""11001"
+dt[id %in% c("11001","8801"),座標系統:="EPSG:4326"]
+#### 座標未填入"8706" "9917"
+dt[is.na(座標系統),座標系統:="EPSG:4326"]
+#### 座標為TWD97"9117" "9720"
+###### 其中9117實際上為TWD67
+correct_coord <- fread(paste0(path,"processing/9117_9720座標錯誤轉換.csv"))
+dt[座標系統=="EPSG:3826",8:9] <- correct_coord[,1:2]
+rm(correct_coord)
+dt[座標系統=="EPSG:3826",座標系統:="EPSG:4326"] 
+#### 確認座標系統為NA
+unique(dt[,座標系統])
 
 ```
+### 1.2 座標與Wkt檢查
+```{r}
+#### 檢查wkt 是否完整
+unique(dt[!is.na(wkt)&!grepl(")$",wkt),id])
+##### 有問題的wkt,"8706" "9411"
+###### 8706 依據8604(相同研究)將wkt換成座標
+correct_coord <- fread(paste0(path,"/processing/8706_座標修正.csv"))
+dt[id==8706,8:12] <- correct_coord[,1:5]
+rm(correct_coord)
+##### 處理9411
+###### 重新將wkt補完
+correct_coord <- fread(paste0(path,"/processing/9411_wkt補完.csv"))
+dt[id==9411,wkt:=correct_coord$wkt] 
+dt[id==9411,wkt]
+rm(correct_coord)
+#### 檢查是否有度分秒格式
+dt[grep("°",X)]
+dt[grep("°",Y)]
+#### 檢查有X,Y的座標是否有wkt
+dt[X>0&!is.na(wkt),wkt:=NA] #刪除wkt
+#### 檢查是否有X,Y資料是否齊全
+dt[X>0&is.na(Y)]
+dt[Y>0&is.na(X)]
+dt[X>0&Y==""]
+dt[Y>0&X==""]
+#### 檢查座標數值是否有顛倒
+##### 檢查Y
+unique(dt[!is.na(X)&!grepl("^2\\d\\.",Y),id])
+##### 9514座標顛倒
+corr_X <- dt[id==9514,X]
+dt[id==9514,X:=Y]
+dt[id==9514,Y:=corr_X]
+dt[id==9514]
+rm(corr_X,X)
+##### 檢查X
+unique(dt[!is.na(X)&!grepl("^12\\d\\.",X),id])
+##### X沒問題
+#### 檢查wkt是否有z
+dt[!is.na(wkt)&grepl("z",wkt)] #沒有
+####查找有錯的wkt
+#e_r <- NULL
+#wkt_tb <- dt[!is.na(wkt)]
+#for (i in 1:nrow(wkt_tb)){
+# r <- try(st_as_sf(wkt_tb[i,],wkt="wkt",crs=4326))
+# if (class(r) == "try-error"){
+#   e_r <- c(e_r,i)
+# }
+#}
+#unique(wkt_tb[(e_r),.(id,wkt,樣區編號)])
+##### 9410 資料有誤
+correct_roordinate <- fread(paste0(path,"processing/9410_wkt修正.csv"))
+dt[id==9410,8:10] <- correct_roordinate[,1:3]
+dt[id==9410,8:10]
+rm(correct_roordinate)
 
+#### 處理沒有任何地理資訊的資料
+dt[is.na(wkt)&is.na(X),id]
+##### 9503有三個植群型原報告無座標，在9410找到
+correct_roordinate  <- fread(paste0(path,"processing/9503_wkt補完.csv"))
+dt[id==9503,wkt:=correct_roordinate$wkt]
+rm(r,wkt_tb,correct_roordinate)
+##### 修正10105 wkt polygon錯誤
+correct_wkt <- fread(paste0(path,"processing/10105_wkt_corrected.csv")) 
+dt[id=="10105",wkt:=correct_wkt$wkt]
+rm(correct_wkt)
+##### 修正木蘭綱為木蘭植物綱
+dt[綱中文=="木蘭綱",綱中文:="木蘭植物綱"]
+##### 處理9918調查年份錯誤
+dt[grepl(9918,調查年),調查年:=2010]
+#### 存檔
+
+readr::write_excel_csv(dt,paste0(path,"result/data_base/third_report_Database_coordinate_corrected_20230616.csv"))
+
+```
+## 2.資料網格化
+### 2.1 處理網格與三通
+```{r}
+#### 備份
+#back_dt <- dt
+#dt <- back_dt
+grid <- st_read(paste0(path,"/layer/500m網格.gpkg"),crs=4326)
+n_rng <- st_read(paste0(path,"/layer/雪霸三通範圍.gpkg"),crs=4326) 
+#### 把切分為點位與wkt形式
+dt_p_sf <- dt[!is.na(X)] %>% st_as_sf(., coords = c("X", "Y"), crs = 4326)
+dt_wkt_sf <- dt[is.na(X)] %>% st_as_sf(., wkt = c("wkt"), crs = 4326)
+#### 轉換成geometry資料
+##### 嘗試以join計算資料筆數
+test_g <- grid
+test_t <- st_join(test_g,dt_p_sf) %>% as.data.table() 
+test_t <- test_t[!is.na(id.y),.(id.x,id.y)]
+test_t2<- st_join(test_g,dt_wkt_sf) %>% as.data.table() 
+test_t2<- test_t2[!is.na(id.y),.(id.x,id.y)]
+
+## 計算資料筆數
+grid$record_count <- (lengths(st_intersects(grid, dt_wkt_sf))+
+                        lengths(st_intersects(grid,dt_p_sf)))
+n_rng$record_count <- (lengths(st_intersects(n_rng, dt_wkt_sf))+
+                        lengths(st_intersects(n_rng, dt_p_sf)))
+
+
+## function 計算project數量
+### m_j代表主要圖層,cl1代表要結合的圖層1,cl2是圖層2(其中之一為wkt，另一個為pt)
+pro_count<- function(major_layer,comb_layer_1,comb_layer_2){
+  cmb_1 <- st_join(major_layer,comb_layer_1) 
+  count_1 <- as.data.table(cmb_1[,c("id.x","id.y")]) 
+  cmb_2 <- st_join(major_layer,comb_layer_2)
+  count_2 <- as.data.table(cmb_2[,c("id.x","id.y")])
+  c_all <- rbind(count_1,count_2)
+  c_all <- c_all[!is.na(id.y)]
+  c_all[,geom:=NULL]
+  s1 <- c_all[!duplicated(c_all)][,.(project_n=.N),by=id.x]
+  colnames(s1)[1] <- "id"
+  s2 <- merge(major_layer,s1,by="id",all.x=TRUE)
+  
+  return(s2)
+  }
+##
+wkt_pro_sf <- unique(dt[is.na(X),.(id,wkt)]) %>% st_as_sf(.,wkt="wkt",crs=4326)
+
+p_pro_sf <- unique(dt[!is.na(X),.(id,X,Y)])  %>% 
+  st_as_sf(.,coords = c("X","Y"),crs=4326)
+### 分別計算500m 與 三通的計畫數
+setnames(n_rng,old = "OBJECTID",new="id")
+pro_n_500m <- pro_count(grid,p_pro_sf,wkt_pro_sf)
+pro_n_nrng <- pro_count(n_rng,p_pro_sf,wkt_pro_sf)
+rm(ts_1,ts_2)
+st_write(grid,paste0(path,"/result/geometry/grid_500_third_report.gpkg"),append = FALSE)
+st_write(n_rng,paste0(path,"/result/geometry/三通範圍_third_report.gpkg"),append = FALSE)
+```
+### 2.2 處理植物界與其他
+重新把整個過程寫成function，並將所有成果放在同一個geopackage裡面
+```{r}
+test_g <- grid
+test_t <- st_join(test_g,dt_p_sf) %>% as.data.table() 
+test_t <- test_t[!is.na(id.y),.(id.x,id.y)]
+test_t2<- st_join(test_g,dt_wkt_sf) %>% as.data.table() 
+test_t2<- test_t2[!is.na(id.y),.(id.x,id.y)]
+record_count <- function(input_layer,rawdt,name){
+  p_sf <- rawdt[!is.na(X)] %>% st_as_sf(., coords = c("X", "Y"), crs = 4326)
+  wkt_sf <- rawdt[is.na(X)] %>% st_as_sf(., wkt = c("wkt"), crs = 4326)
+  cmb_1 <- st_join(input_layer,p_sf) %>% as.data.table()
+  cmb_1 <- cmb_1[!is.na(id.y),.(id.x,id.y)] 
+  cmb_2 <- st_join(input_layer,wkt_sf) %>% as.data.table()
+  cmb_2 <- cmb_2[!is.na(id.y),.(id.x,id.y)]
+  record_c <- rbind(cmb_1,cmb_2)
+  pro_c <- unique(record_c)
+  g_rec <- record_c[,.N,by=.(id.x)] %>% 
+    setnames(.,c("id.x","N"),c("id",paste0(name,"_record_count")))
+  g_pro_n <- pro_c[,.N,by=.(id.x)] %>% 
+    setnames(.,c("id.x","N"),c("id",paste0(name,"_project_n")))
+  s2 <- merge(input_layer,g_rec,by="id",all.x=TRUE)
+  s2 <- merge(s2,g_pro_n,by="id",all.x=TRUE)
+  return(s2)
+}
+### 重新分析
+grid <- st_read(paste0(path,"/layer/500m網格.gpkg"),crs=4326)
+n_rng <- st_read(paste0(path,"/layer/雪霸三通範圍.gpkg"),crs=4326) 
+### 網格
+#### 全部
+grid_result <- record_count(grid,dt,"total")  
+#### plant
+dt_plant <- dt[生物分群=="植物界"]
+grid_result <- record_count(grid_result,dt_plant,"plant")  
+#### not plant
+dt_no_p <- dt[!(綱中文 %in% c("石松綱","水龍骨綱",
+                         "松綱","木蘭植物綱"))&!is.na(taxon_id)]
+grid_result <- record_count(grid_result,dt_no_p,"np") 
+### 三通圖
+#### 全部
+setnames(n_rng,old = "OBJECTID",new="id")
+nrng_result <- record_count(n_rng,dt,"total")  
+#### plant
+nrng_result <- record_count(nrng_result,dt_plant,"plant")  
+#### not plant
+nrng_result <- record_count(nrng_result,dt_no_p,"np") 
+#### 加入label
+nrng_result <-  as.data.table(nrng_result)
+nrng_result[,13:18] <- nrng_result[,13:18] %>% replace(is.na(.), 0)
+class(nrng_result)
+nrng_result[,label_pro_n:=paste0(label," (",total_project_n,"筆)")]
+nrng_result[,label_record_n:=paste0(label," (",total_record_count,"筆)")]
+nrng_result[,label_plant_rn:=paste0(label," (",plant_record_count,"筆)")]
+nrng_result[,label_plant_pn:=paste0(label," (",plant_project_n,"筆)")]
+nrng_result[,label_np_rn:=paste0(label," (",np_record_count,"筆)")]
+nrng_result[,label_np_pn:=paste0(label," (",np_project_n,"筆)")]
+## 輸出資料
+nrng_result %<>% st_as_sf(.,crs=4326)
+
+## 存檔
+
+
+st_write(grid_result,paste0(path,"/result/geometry/grid_500_third_report_total.gpkg"),append = FALSE)
+st_write(nrng_result,paste0(path,"/result/geometry/三通範圍_third_report_total.gpkg"),append = FALSE)
+st_write(grid_result,paste0(path,"/result/geometry/grid_500_third_report_total_2.gpkg"),append = FALSE)
+```

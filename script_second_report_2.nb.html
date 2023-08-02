@@ -1771,57 +1771,16 @@ data_path &lt;- &quot;E:/雪霸報告統整&quot;</code></pre>
 <!-- rnb-text-begin -->
 <!-- rnb-text-end -->
 <!-- rnb-chunk-begin -->
-<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxubGlicmFyeShkYXRhLnRhYmxlKVxuYGBgIn0= -->
-<pre class="r"><code>library(data.table)</code></pre>
-<!-- rnb-source-end -->
-<!-- rnb-output-begin eyJkYXRhIjoiUmVnaXN0ZXJlZCBTMyBtZXRob2Qgb3ZlcndyaXR0ZW4gYnkgJ2RhdGEudGFibGUnOlxuICBtZXRob2QgICAgICAgICAgIGZyb21cbiAgcHJpbnQuZGF0YS50YWJsZSAgICAgXG5kYXRhLnRhYmxlIDEuMTQuMCB1c2luZyA2IHRocmVhZHMgKHNlZSA/Z2V0RFR0aHJlYWRzKS4gIExhdGVzdCBuZXdzOiByLWRhdGF0YWJsZS5jb21cblxu6LyJ5YWl5aWX5Lu277ya4oCYZGF0YS50YWJsZeKAmVxuXG7kuIvliJfnianku7booqvpga7mlrfnlLEg4oCYLkdsb2JhbEVuduKAmTpcblxuICAgIC5OXG4ifQ== -->
-<pre><code>Registered S3 method overwritten by &#39;data.table&#39;:
-  method           from
-  print.data.table     
-data.table 1.14.0 using 6 threads (see ?getDTthreads).  Latest news: r-datatable.com
-
-載入套件：‘data.table’
-
-下列物件被遮斷由 ‘.GlobalEnv’:
-
-    .N</code></pre>
-<!-- rnb-output-end -->
-<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxubGlicmFyeShnZ3Bsb3QyKVxubGlicmFyeShyZWFkeGwpXG5saWJyYXJ5KHdyaXRleGwpXG5saWJyYXJ5KHN0cmluZ3IpXG5saWJyYXJ5KHNob3d0ZXh0KSPmlLnororkuK3mloflrZflnotcbmBgYCJ9 -->
-<pre class="r"><code>library(ggplot2)
+<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxubGlicmFyeShkYXRhLnRhYmxlKVxubGlicmFyeShnZ3Bsb3QyKVxubGlicmFyeShyZWFkeGwpXG5saWJyYXJ5KHdyaXRleGwpXG5saWJyYXJ5KHN0cmluZ3IpXG5saWJyYXJ5KHNob3d0ZXh0KSPmlLnororkuK3mloflrZflnotcbmxpYnJhcnkoc2YpICNmb3IgZ2lzXG5saWJyYXJ5KGRwbHlyKVxuYGBgIn0= -->
+<pre class="r"><code>library(data.table)
+library(ggplot2)
 library(readxl)
 library(writexl)
 library(stringr)
-library(showtext)#改變中文字型</code></pre>
+library(showtext)#改變中文字型
+library(sf) #for gis
+library(dplyr)</code></pre>
 <!-- rnb-source-end -->
-<!-- rnb-output-begin eyJkYXRhIjoi6LyJ5YWl6ZyA6KaB55qE5aWX5Lu277yac3lzZm9udHNcbui8ieWFpemcgOimgeeahOWll+S7tu+8mnNob3d0ZXh0ZGJcbiJ9 -->
-<pre><code>載入需要的套件：sysfonts
-載入需要的套件：showtextdb</code></pre>
-<!-- rnb-output-end -->
-<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxubGlicmFyeShzZikgI2ZvciBnaXNcbmBgYCJ9 -->
-<pre class="r"><code>library(sf) #for gis</code></pre>
-<!-- rnb-source-end -->
-<!-- rnb-output-begin eyJkYXRhIjoiTGlua2luZyB0byBHRU9TIDMuOS4wLCBHREFMIDMuMi4xLCBQUk9KIDcuMi4xXG4ifQ== -->
-<pre><code>Linking to GEOS 3.9.0, GDAL 3.2.1, PROJ 7.2.1</code></pre>
-<!-- rnb-output-end -->
-<!-- rnb-source-begin eyJkYXRhIjoiYGBgclxubGlicmFyeShkcGx5cilcbmBgYCJ9 -->
-<pre class="r"><code>library(dplyr)</code></pre>
-<!-- rnb-source-end -->
-<!-- rnb-output-begin eyJkYXRhIjoiXG7ovInlhaXlpZfku7bvvJrigJhkcGx5cuKAmVxuXG7kuIvliJfnianku7booqvpga7mlrfoh6og4oCYcGFja2FnZTpkYXRhLnRhYmxl4oCZOlxuXG4gICAgYmV0d2VlbiwgZmlyc3QsIGxhc3Rcblxu5LiL5YiX54mp5Lu26KKr6YGu5pa36IeqIOKAmHBhY2thZ2U6c3RhdHPigJk6XG5cbiAgICBmaWx0ZXIsIGxhZ1xuXG7kuIvliJfnianku7booqvpga7mlrfoh6og4oCYcGFja2FnZTpiYXNl4oCZOlxuXG4gICAgaW50ZXJzZWN0LCBzZXRkaWZmLCBzZXRlcXVhbCwgdW5pb25cbiJ9 -->
-<pre><code>
-載入套件：‘dplyr’
-
-下列物件被遮斷自 ‘package:data.table’:
-
-    between, first, last
-
-下列物件被遮斷自 ‘package:stats’:
-
-    filter, lag
-
-下列物件被遮斷自 ‘package:base’:
-
-    intersect, setdiff, setequal, union</code></pre>
-<!-- rnb-output-end -->
 <!-- rnb-chunk-end -->
 <!-- rnb-text-begin -->
 <p>TWD97轉84 code</p>

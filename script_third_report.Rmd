@@ -409,7 +409,7 @@ list_1_author[grep(" \\S+ \\S+ \\S+",name)]
 list_1_author[simple_name=="Oxalis acetosella subsp. griffithii var. formosana",
               scientificName:="Oxalis acetosella L. subsp. griffithii (Edgew. & Hook f.) Hara var. formosana (Terao) Huang & Huang"]
 list_1_author[name=="Skimmia japonica distincte-venulosa orthoclada",
-              scientificName:="Skimmia japonica Thunb. ssp. distincte-venulosa (Hayata) Ho var. orthoclada (Hayata) Ho"]
+              scientificName:="Skimmia japonica Thunb. subsp. distincte-venulosa (Hayata) Ho var. orthoclada (Hayata) Ho"]
 ### 處理剩下的變種、亞種與型
 #### 先將變種名之前的命名者加入
 #### 由於資料必須分兩步驟加入命名者，為了可以查找到資料，新增標籤
@@ -498,7 +498,7 @@ db_2[,分類階層:=rank]
 db_2[,生物分群:=kingdom_c]
 db_2[taxon_id=="t0061783",生物分群:="動物界"]
 colnames(db_2)
-db_3 <- db_2[,c(18:20,45,20:36,2,37:43)]
+db_3 <- db_2[,c(18:20,45,20:36,3,37:43)]
 write_excel_csv(db_3,paste0(path,"/result/data_base/total_plant_database_update_20230612.csv"))
 ```
 

@@ -1,0 +1,219 @@
+---
+title: "For wulin data"
+output: html_notebook
+---
+# 0. package 
+```{r}
+library(data.table)
+library(sf)
+library(readr)
+library(stringr)
+path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/"
+```
+# 1. dataloading
+
+```{r}
+ave <- fread(paste0(path,"database/occAvesMammalia_all.csv"),
+             encoding = "UTF-8",fill=TRUE)
+inc <-fread(paste0(path,"database/occ_InseActeMollAmphRept.csv"),
+             encoding = "UTF-8",fill=TRUE)
+plant <- fread(paste0(path,"database/third_report_Database_coordinate_corrected_20230615.csv"),
+             encoding = "UTF-8",fill=TRUE)
+
+```
+## 1.1 處理ave的座標系統問題
+TWD97轉84 code
+```{r}
+library(dplyr)
+
+TWD97TM2toWGS84 <- function (input_lat, input_lon){  
+  # input_lat: TWD97橫座標, 南北緯度, latitude N
+  # input_lon: TWD97縱座標, 東西經度, longitude E
+  
+  input_lat <- input_lat %>% as.character %>% as.numeric()
+  input_lon <- input_lon %>% as.character %>% as.numeric()
+  
+  a = 6378137.0
+  b = 6356752.314245
+  lon0 = 121 * pi / 180
+  k0 = 0.9999
+  dx = 250000
+  dy = 0
+  e = (1 - b^2 / a^2)^0.5
+  
+  
+  x =  input_lat - dx # input_lat: TWD97橫座標, 緯度, latitude
+  y =  input_lon - dy # input_lon: TWD97縱座標, 經度, longitude
+  
+  M = y/k0
+  
+  mu = M/(a*(1.0 - ( e**2 )/4.0 - 3* (e**4)/64.0 - 5* (e**6)/256.0))
+  e1 = (1.0 -  ((1.0 -  (e**2))**0.5)) / (1.0 +  ((1.0 -  (e**2))**0.5))
+  
+  J1 = (3*e1/2 - 27* (e1**3)/32.0)
+  J2 = (21* (e1**2)/16 - 55* (e1**4)/32.0)
+  J3 = (151* (e1**3)/96.0)
+  J4 = (1097* (e1**4)/512.0)
+  
+  fp = mu + J1*sin(2*mu) + J2*sin(4*mu) + J3*sin(6*mu) + J4*sin(8*mu)
+  
+  e2 =  ((e*a/b)**2)
+  C1 =  (e2*cos(fp)**2)
+  T1 =  (tan(fp)**2)
+  R1 = a*(1- (e**2))/ ((1- (e**2)* (sin(fp)**2))**(3.0/2.0))
+  N1 = a/ ((1- (e**2)* (sin(fp)**2))**0.5)
+  
+  D = x/(N1*k0)
+  
+  #緯度計算 latitude
+  Q1 = N1*tan(fp)/R1
+  Q2 = ( (D**2)/2.0)
+  Q3 = (5 + 3*T1 + 10*C1 - 4* (C1**2) - 9*e2)* (D**4)/24.0
+  Q4 = (61 + 90*T1 + 298*C1 + 45* (T1**2) - 3* (C1**2) - 252*e2)* (D**6)/720.0
+  lat = fp - Q1*(Q2 - Q3 + Q4)
+  
+  #經度計算 longitude
+  Q5 = D
+  Q6 = (1 + 2*T1 + C1)* (D**3)/6
+  Q7 = (5 - 2*C1 + 28*T1 - 3* (C1**2) + 8*e2 + 24* (T1**2))* (D**5)/120.0
+  lon = lon0 + (Q5 - Q6 + Q7)/cos(fp)
+  
+  
+  lat = (lat*180) /pi #南北緯度  latitude 
+  lon = (lon*180)/ pi #東西經度  longitude
+
+  WGS = list(lat = lat, lon = lon)
+  return(WGS)
+}
+```
+
+```{r}
+colnames(ave)
+ave[footprintSRS=="",3:24] <- ave[footprintSRS=="",2:23]
+ave[associatedReferences==2009,associatedReferences:="9808"]
+write.csv(ave,paste0(path,"database/occAvesMammalia_all_20230805.csv"))
+
+ave_2 <- ave[,.(associatedReferences,classVernacularName,verbatimLongitude,
+              verbatimLatitude,footprintWKT,footprintSRS,
+              taxonRank,originalNameUsage,scientificName,family)]
+unique(ave_2$footprintSRS)
+ave_2[footprintSRS=="EPSG:3826"&verbatimLongitude==""]
+ave_2[footprintSRS=="EPSG:3826",c("verbatimLatitude","verbatimLongitude"):=
+        TWD97TM2toWGS84(verbatimLongitude,verbatimLatitude)] 
+
+ave_2[footprintSRS=="EPSG:3826",footprintSRS:="EPSG:4326"]
+write.csv(ave_2,paste0(path,"database/occAvesMammalia_all_20231118.csv"))
+write.csv(inc,paste0(path,"database/occ_InseActeMollAmphRept.csv"))
+colnames(inc)
+
+```
+
+
+# 2.loading the location layer and intersection
+```{r}
+wulin <- st_read(paste0(path,"/layer/wulin.gpkg"),crs=4326)
+
+
+pla_2 <- plant[,.(id,綱,科名,X,Y,wkt,座標系統,分類階層,物種俗名,物種學名,
+                taxon_id,備註)]
+colnames(ave_2) <- c("pro_id","class","X","Y","wkt","SRS","level","org_name","sciname","family")
+### 檢查wkt
+#### 處理Z值，不在武陵內先刪掉
+
+ave_2 <- ave_2[!grepl("Z",wkt)]
+#### 處理wkt為空值
+ave_2[!is.na(X)&!is.na(wkt),.(pro_id,X,Y,wkt)] %>% unique()
+ave_2[!is.na(X)&!is.na(wkt)&pro_id==9609,c("X","Y"):=.(NA,NA)]
+ave_2[!is.na(X)&!is.na(wkt),wkt:=NA] 
+#### 處理wkt非)結尾
+ave_2[,rec_id:=1:nrow(ave_2)]
+
+check_dt <-ave_2[!is.na(wkt)&!grepl(")$",wkt),.(rec_id,pro_id,wkt)]%>% unique()
+write.csv(check_dt,paste0(path,"/wulin/processing/data_check/wkt_未閉合.csv"))
+#### 都不在武陵內，先刪掉
+ave_3 <- ave_2[!(rec_id %in% check_dt$rec_id)]
+### 處理沒辦法讀取
+e_r <- NULL
+wkt_tb <-unique(ave_3[is.na(X),.(pro_id,wkt)])
+for (i in 1:nrow(wkt_tb)){
+   r <- try(st_as_sf(wkt_tb[i,],wkt="wkt",crs=4326))
+ if (class(r) == "try-error"){
+   e_r <- c(e_r,i)
+ }
+}
+unique(wkt_tb[(e_r),.(id,wkt,樣區編號)])
+rm(r,wkt_tb,e_r,i)
+####
+
+spe_extra <- function(input_layer,rawdt){
+  p_sf <- rawdt[!is.na(X)] %>% st_as_sf(., coords = c("X", "Y"), crs = 4326)
+  wkt_sf <- rawdt[is.na(X)] %>% st_as_sf(., wkt = c("wkt"), crs = 4326)
+  cmb_1 <- st_join(input_layer,p_sf) %>% as.data.table()
+  cmb_2 <- st_join(input_layer,wkt_sf) %>% as.data.table()
+  if (!is.object(cmb_2)){
+  cmb_all <- cmb_1[!is.na(id)]}else{
+  cmb_all<- rbind(cmb_1[!is.na(id)],cmb_2[!is.na(id)],fill=TRUE)}
+  
+  return(cmb_all)
+}
+ave_w <-unique(cmb_1[,.(class,sciname,family)])
+
+taicol <- fread(paste0(path,"/taiCOL_name/TaiCOL_name_20230325.csv"),encoding = "UTF-8")
+taicol[class_c=="鳥綱"]
+ave_name <- taicol[ave_w,on=.(simple_name=sciname)]
+write_excel_csv(ave_name,paste0(path,"wulin/processing/ave_name_list.csv"))
+```
+## 2.1 處理昆蟲
+
+```{r}
+inc_2 <- inc[,.(id,class,科名,目名,X,Y,wkt,座標系統,level,物種學名,樣區編號,
+                name_code_source,accepted_name_code)]
+
+inc_w <- spe_extra(wulin,inc_2)
+### 處理wkt
+e_r <- NULL
+wkt_tb <-unique(inc_2[is.na(X),.(id,wkt)])
+for (i in 1:nrow(wkt_tb)){
+   r <- try(st_as_sf(wkt_tb[i,],wkt="wkt",crs=4326))
+ if (class(r) == "try-error"){
+   e_r <- c(e_r,i)
+ }
+}
+wkt_tb[e_r]
+### 有問題的9006,9212,9501,9601,9701
+inc_2[id==9006,X:=sub(",2\\d\\.\\d+","",X)]
+### 9212 座標完全錯誤
+cor_9212 <- fread(paste0(path,"/wulin/processing/9212_corrected.csv"))
+for (i in 1:8){
+inc_2[id==9212&樣區編號==i,c("X","Y"):=c(cor_9212[plot_id==i,.(X,Y)])]
+}
+### 處理9501,9601,9701
+inc_2[wkt=="POINT( )",wkt:=NA]
+### 將X轉成num
+inc_2[,X:=as.numeric(X)]
+inc_w <- spe_extra(wulin,inc_2)
+### 處理sp.重複的問題
+inc_w[,物種學名:=gsub("sp\\. sp\\.","sp\\.",物種學名)]
+inc_w[,物種學名:=gsub("sp\\. sp\\.","sp\\.",物種學名)]
+inc_w_name <- inc_w[,.(level,物種學名,class,科名,目名,name_code_source)]%>% unique()
+inc_w_name[level=="genus",物種學名:=gsub("([A-Z][a-z]+).*","\\1",物種學名)]
+inc_w_name[,物種學名:=gsub(" sp\\..*","",物種學名)]
+inc_w_name[,物種學名:=gsub("<U\\+00A0>","",物種學名)]
+inc_w_name[,物種學名:=gsub(" spp\\..*","",物種學名)]
+inc_w_name_2 <- taicol[inc_w_name,on=.(simple_name=物種學名)]
+inc_w_name_2[is.na(rank)]
+inc_w_name[物種學名=="Hydrodromidae"]
+write_excel_csv(inc_w_name_2,paste0(path,"wulin/processing/inc_w_name.csv"))
+```
+
+### 2.2 處理植物
+```{r}
+### 處理9410 wkt有東西
+pla_2[!is.na(X)&!is.na(wkt),wkt:=NA]
+###
+pla_w <- spe_extra(wulin,pla_2) 
+pla_w2 <- pla_w[,.(物種學名,物種俗名,科名,綱,分類階層,taxon_id)]%>%unique()
+pla_name<- taicol[pla_w2,on=.(taxon_id)]
+write_excel_csv(pla_name,paste0(path,"wulin/processing/pla_w_name.csv"))
+```
+

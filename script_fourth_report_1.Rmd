@@ -1,0 +1,850 @@
+---
+title: "script_fourth_report_1"
+output: html_notebook
+---
+# 概述
+整合資料庫資料並重新整理
+# 0. package and path
+
+```{r}
+library(data.table)
+library(sf)
+library(readr)
+library(stringr)
+library(readxl)
+path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/"
+```
+TWD97轉84 code
+```{r}
+library(dplyr)
+
+TWD97TM2toWGS84 <- function (input_lat, input_lon){  
+  # input_lat: TWD97橫座標, 南北緯度, latitude N
+  # input_lon: TWD97縱座標, 東西經度, longitude E
+  
+  input_lat <- input_lat %>% as.character %>% as.numeric()
+  input_lon <- input_lon %>% as.character %>% as.numeric()
+  
+  a = 6378137.0
+  b = 6356752.314245
+  lon0 = 121 * pi / 180
+  k0 = 0.9999
+  dx = 250000
+  dy = 0
+  e = (1 - b^2 / a^2)^0.5
+  
+  
+  x =  input_lat - dx # input_lat: TWD97橫座標, 緯度, latitude
+  y =  input_lon - dy # input_lon: TWD97縱座標, 經度, longitude
+  
+  M = y/k0
+  
+  mu = M/(a*(1.0 - ( e**2 )/4.0 - 3* (e**4)/64.0 - 5* (e**6)/256.0))
+  e1 = (1.0 -  ((1.0 -  (e**2))**0.5)) / (1.0 +  ((1.0 -  (e**2))**0.5))
+  
+  J1 = (3*e1/2 - 27* (e1**3)/32.0)
+  J2 = (21* (e1**2)/16 - 55* (e1**4)/32.0)
+  J3 = (151* (e1**3)/96.0)
+  J4 = (1097* (e1**4)/512.0)
+  
+  fp = mu + J1*sin(2*mu) + J2*sin(4*mu) + J3*sin(6*mu) + J4*sin(8*mu)
+  
+  e2 =  ((e*a/b)**2)
+  C1 =  (e2*cos(fp)**2)
+  T1 =  (tan(fp)**2)
+  R1 = a*(1- (e**2))/ ((1- (e**2)* (sin(fp)**2))**(3.0/2.0))
+  N1 = a/ ((1- (e**2)* (sin(fp)**2))**0.5)
+  
+  D = x/(N1*k0)
+  
+  #緯度計算 latitude
+  Q1 = N1*tan(fp)/R1
+  Q2 = ( (D**2)/2.0)
+  Q3 = (5 + 3*T1 + 10*C1 - 4* (C1**2) - 9*e2)* (D**4)/24.0
+  Q4 = (61 + 90*T1 + 298*C1 + 45* (T1**2) - 3* (C1**2) - 252*e2)* (D**6)/720.0
+  lat = fp - Q1*(Q2 - Q3 + Q4)
+  
+  #經度計算 longitude
+  Q5 = D
+  Q6 = (1 + 2*T1 + C1)* (D**3)/6
+  Q7 = (5 - 2*C1 + 28*T1 - 3* (C1**2) + 8*e2 + 24* (T1**2))* (D**5)/120.0
+  lon = lon0 + (Q5 - Q6 + Q7)/cos(fp)
+  
+  
+  lat = (lat*180) /pi #南北緯度  latitude 
+  lon = (lon*180)/ pi #東西經度  longitude
+
+  WGS = list(lat = lat, lon = lon)
+  return(WGS)
+}
+```
+# 1. 讀入資料
+```{r}
+ave <- fread(paste0(path,"database/occAvesMammalia_all_20231118.csv"),
+             encoding = "UTF-8",fill=TRUE)
+inc <-fread(paste0(path,"database/occ_InseActeMollAmphRept.csv"),fill=TRUE)
+
+plant <- fread(paste0(path,"database/third_report_Database_coordinate_corrected_20230615.csv"),
+             encoding = "UTF-8",fill=TRUE)
+```
+
+# 2. 處理inc
+## 2.1 重新對應學名
+重新對應學名，有些奇怪的情況，例如物種是屬卻對應到科的情況
+### 2.1.1 處理好學名，重新與taicol名錄對應
+```{r}
+taicol_n <- fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_taxon_20231009.csv"),encoding="UTF-8")
+inc_name <- fread(paste0(path,"/期末報告/rawdata/名錄整合/總名錄_昆蟲類_魚貝類_兩爬類_未整合.csv"))
+inc_n_c <- inc_name[,.(sp_id,level,corrected_name,name_code_source)]
+inc_n_c[,corrected_name:=gsub(" sp\\.","",corrected_name)]
+colnames(taicol_n)
+inc_n_c2 <- inc_n_c[taicol_n,on=.(corrected_name=simple_name)][!is.na(sp_id)]
+inc_c3 <- unique(inc[,.(sp_id,物種學名,name_code_source)])
+inc[str_detect(物種學名,"sp. sp.")]
+writexl::write_xlsx(inc_n_c2,paste0(path,"/期末報告/rawdata/名錄整合/總名錄_昆蟲類_魚貝類_兩爬類_名錄確認1.xlsx"))
+
+
+writexl::write_xlsx(inc_c3,paste0(path,"/期末報告/rawdata/名錄整合/database_昆蟲類_魚貝類_兩爬類_名錄確認1.xlsx"))
+### 輸出資料手動整理
+
+```
+
+### 2.1.2 讀入手動整理表格
+首先與Taicol資料整合
+```{r}
+rm(inc_n_c,inc_c3,inc_n_c2,inc_name)
+
+inc_nl <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/昆蟲名錄統整.xlsx"))%>% as.data.table()
+## 處理corrected_name 有sp.的問題
+inc_nl[,corrected_n:=gsub(" sp\\.","",corrected_n)]
+inc_nl[,n_sp_id:=1:.N]
+## 組合inc_nl與taicol
+colnames(taicol_n)
+inc_nl_2 <- taicol_n[inc_nl,on=.(simple_name=corrected_n)]
+
+rep_id <- inc_nl_2[duplicated(n_sp_id),n_sp_id]
+#210 1687 2042 2049重複 檢視
+inc_nl_2[n_sp_id %in% rep_id]
+# 刪除第二筆重複值
+inc_nl_3<- inc_nl_2[duplicated(n_sp_id)==FALSE]
+## 找出有對應到，但是name_id source是GBIF的資料
+inc_nl_3[is.na(name_id)&name_code_source=="TaiCol",
+         name_code_source:="GBIF"]
+colnames(inc_nl_3)
+### 輸出確認GBIF
+writexl::write_xlsx(inc_nl_3[is.na(name_id),.(sp_id,org_spname,
+                            simple_name,
+                            n_sp_id,corrected_level)],
+                    paste0(path,"/期末報告/rawdata/名錄整合/昆蟲名錄_forGBIF.xlsx"))
+```
+### 2.1.3 重新整合表格
+首先，將原本的表格整理起來，包括科、屬、種與階層
+```{r}
+colnames(inc_nl_3)
+### 先產出 對應原始資料庫的對應表，將資料庫資料更新包括namecode
+inc_tal <- inc_nl_3[!is.na(name_id),.(name_id,org_spname,simple_name,sp_id,n_sp_id,corrected_level,name_code_source)]
+gbif_list <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/昆蟲名錄_forGBIF_整理後.xlsx"))
+inc_all_nc <- rbind(inc_tal,gbif_list,fill=T)
+### 將name_id有缺的填入
+inc_all_nc[is.na(name_code_source),name_code_source:="GBIF"]
+colnames(inc)
+
+inc_db <- inc_all_nc[inc,on=.(sp_id,org_spname=物種學名)]
+inc_db[is.na(name_code_source)]
+inc_db <- inc_db[duplicated(record_id)==FALSE,]
+### 確定database名錄有辦法對應以後，統整名錄
+rm(inc_nl_2)
+inc_tal_list <- taicol_n[inc_tal,on=.(name_id)]
+colnames(inc_tal_list)
+inc_tal_list <- inc_tal_list[,c(1,4,5,18,22:27,34:35,38:55)]
+gbif_n <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/昆蟲名錄_forGBIF_整理後.xlsx"),sheet=2)%>% as.data.table() %>% unique()
+colnames(gbif_list)
+gbif_list <- as.data.table(gbif_list)
+gbif_fn_l <- gbif_list[gbif_n,on=.(GBIF_key=key)]
+gbif_fn_l <- gbif_fn_l[duplicated(n_sp_id)==FALSE]
+#### 名錄整合
+inc_all_list <- rbind(inc_tal_list,gbif_fn_l,fill=T)
+inc_all_list[is.na(corrected_level)]
+### 名錄資訊整合
+inc_all_list[is.na(name_id),name_id:=GBIF_key]
+### 重新修正database
+inc_db <- inc_all_list[inc,on=.(sp_id,org_spname=物種學名)]
+inc_db <- inc_db[duplicated(record_id)==FALSE,]
+### 重新填入學名與階層
+colnames(inc_db)
+inc_db[,物種學名:=simple_name][,level:=corrected_level]
+inc_db[,i.name_code_source:=name_code_source]
+inc_db[,目名:=order][,科名:=family]
+### 檢查目與科
+inc_db[is.na(科名)]
+### 處理目名為Psocoptera，level卻定義為genus的問題
+inc_db[物種學名=="Psocoptera",level:=order]
+inc_db[is.na(科名)]
+### 處理學名`物種學名(原始報告)`=="Aframrus flores" 出現問題,
+inc_db[`物種學名(原始報告)`=="Aframrus flores",
+       c("物種學名","科名","level",
+          "name_id","i.name_code_source","目名"):=
+         .("Afronurus floreus","Heptageniidae",
+          "species",62439,"TaiCol","Ephemeroptera")]
+colnames(inc_db)
+inc_db[`物種學名(原始報告)`=="Aframrus flores"]
+### 檢查Xylophagidae
+inc_db[物種學名=="Xylophagidae"]
+inc_db[is.na(i.name_code_source),i.name_code_source:="GBIF"]
+### 重新編排db
+colnames(inc_db)
+inc_db_r <- inc_db[,.(id,調查年,調查日期,生物分群,門=phylum,i.class,X,Y,wkt,
+                      座標系統,位置誤差,樣區編號,level,`目名(原始報告)`,
+                      目名,`科名(原始報告)`,科名,
+                      `物種俗名(原始報告)`,`物種學名(原始報告)`,
+                      物種學名,name_id,i.name_code_source)]
+setnames(inc_db_r,c("i.class","i.name_code_source"),
+         c("class","name_code_source"))
+
+
+### 處理level有問題，並統一詞彙
+inc_db_r[level==44749,level:="order"]
+inc_db_r[level=="Psocodea",level:="order"]
+inc_db_r[,level:=tolower(level)]
+
+unique(inc_db_r$level)
+inc_db_r[level=="species"]
+###物種學名(原始報告)==Colymbetinae 亞科 物種學名=Dytiscidae，name_id通通要改，level改family
+
+taicol_n[simple_name=="Dytiscidae"]
+inc_db_r[科名=="Dytiscidae",]
+inc_db_r[`物種學名(原始報告)`=="Colymbetinae 亞科",
+         c("物種學名","name_id","level"):=
+           .("Dytiscidae",3934,"family")]
+inc_db_r[`物種學名(原始報告)`=="Colymbetinae 亞科",]
+###物種學名(原始報告)==Paraleptophlebia spA.改成屬 level改成genus,Paraleptophlebia spB.一樣
+inc_db_r[str_detect(`物種學名(原始報告)`,"Paraleptophlebia sp[A-B]\\."),
+         c("物種學名","name_id","level"):=
+           .("Paraleptophlebia",15505,"genus")]
+### 檢查family
+inc_db_r[str_detect(level,"family")]
+### 把調查方法與備註加回去
+inc_db_r <- data.table(inc_db_r,inc_db[,.(生活史,數量,數量單位,備註)])
+write.csv(inc_db_r,paste0(path,"/database/occ_InseActeMollAmphRept_20231119.csv"),fileEncoding = "UTF-8")
+inc_nlist <- inc_db_r[,.(id,物種學名,name_id,level,name_code_source)]
+write.csv(inc_nlist,paste0(path,"/database/namelist_InseActeMollAmphRept_20231119.csv"),fileEncoding = "UTF-8")
+rm(inc_all_list,inc_gbif,inc_tal,inc_nl,inc_all_nc)
+rm(inc_tal_list,inc_nlist,inc)
+rm(gbif_fn_l,gbif_list,gbif_n)
+```
+# 3. 處理鳥類、哺乳類資料庫
+```{r}
+ave <- fread(paste0(path,"database/occAvesMammalia_all_20230805.csv"),fill=TRUE)
+```
+## 3.1 處理座標問題
+將TWD97的資料轉換成WGS84
+```{r}
+unique(ave$footprintSRS)
+ave[footprintSRS=="EPSG:3826"]
+ave[footprintSRS=="EPSG:3826"&footprintWKT=="",
+    c("verbatimLatitude","verbatimLongitude"):=
+        TWD97TM2toWGS84(verbatimLongitude,verbatimLatitude)]
+### 將已經換算過的資料改座標系統
+ave[footprintSRS=="EPSG:3826"&footprintWKT=="",footprintSRS:="EPSG:4326"]
+### test
+test <- ave[footprintSRS=="EPSG:3826"&footprintWKT!="",]
+test <- st_as_sf(test,wkt = "footprintWKT",crs = 3826)
+test <- st_transform(test, crs = 4326) 
+
+ave_2 <- ave
+ave_2[footprintSRS=="EPSG:3826"&footprintWKT!="",
+      footprintWKT:=st_as_text(test$footprintWKT)]
+ave_2[footprintSRS=="EPSG:3826"&footprintWKT!="",footprintSRS:="EPSG:4326"]
+rm(test)
+write.csv(ave_2,paste0(path,"database/occAvesMammalia_all_20231120.csv"))
+```
+## 3.2 處理學名
+重新對應taicol名錄
+```{r}
+colnames(taicol_n)
+ave_3 <- taicol_n[usage_status=="accepted"][ave,on=.(simple_name=scientificName)]
+ave_3[,name_code_source:="TaiCol"]
+ave_check <- unique(ave_3[is.na(name_id),.(simple_name,originalVernacularName)])
+writexl::write_xlsx(ave_check,paste0(path,"/期末報告/rawdata/名錄整合/鳥類哺乳類名錄確認.xlsx"))
+ave_ch_2 <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/鳥類哺乳類名錄確認_corrected.xlsx")) %>% as.data.table()
+ave_test <- ave_3
+ave_ch_3 <- taicol_n[usage_status=="accepted"][ave_ch_2,on=.(taxon_id)]
+colnames(ave_3)
+colnames(ave_ch_3)
+for (i in 1:nrow(ave_ch_3)){
+  ave_test[is.na(name_id)&
+             originalVernacularName==ave_ch_2$originalVernacularName[i],
+           1:49:=ave_ch_3[i,1:49]]
+  }
+
+ave_test[is.na(name_id)]
+ave_3 <- ave_test[!is.na(name_id)]
+ave_3[str_detect(common_name_c,"屬"),taxonRank:="genus"]
+ave_3[str_detect(common_name_c,"科"),taxonRank:="family"]
+ave_3[str_detect(common_name_c,"目$"),taxonRank:="order"]
+write.csv(ave_3,paste0(path,"database/occAvesMammalia_all_20231120_3.csv"))
+rm(ave_ch_2,ave_test,ave_ch_3,ave_check,corr,name_ck,inc_nl_3)
+```
+
+
+# 5. 處理110年後資料
+
+```{r}
+file_list <- list.files("E:/雪霸報告統整/111年結案")
+dt <- lapply(file_list,function(x){
+ dt <- read_xlsx(paste0("E:/雪霸報告統整/111年結案/",
+                        x,"/",x,".xlsx"),sheet=1)%>% as.data.table()  
+   return(dt)
+})
+dt <- rbindlist(dt)
+### 處理物種名
+dt_110check <- unique(dt[is.na(物種學名),.(`物種俗名(原始報告)`,`物種學名(原始報告)`)])
+writexl::write_xlsx(dt_110check,paste0(path,"/期末報告/rawdata/名錄整合/110年後報告物種名錄確定.xlsx"))
+name_ck <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/110年後報告物種名錄確定_修正.xlsx")) %>% as.data.table()
+dt[is.na(物種學名)]
+for (i in 1:nrow(name_ck)){
+  dt[is.na(物種學名)&(`物種俗名(原始報告)`==name_ck$`物種俗名(原始報告)`[i]),
+     taxon_id:=name_ck$corrected_id[i]]
+}
+dt[is.na(taxon_id)]
+writexl::write_xlsx(unique(dt[is.na(taxon_id),.(物種學名)]),paste0(path,"/期末報告/rawdata/名錄整合/110年後報告物種名錄確認_2.xlsx"))
+name_ck <- read_xlsx(paste0(path,"期末報告/rawdata/名錄整合/110年後報告物種名錄確認_2_修正.xlsx")) %>% as.data.table()
+name_ck <- name_ck[!is.na(taxon_id)]
+for (i in 1:nrow(name_ck)){
+  dt[is.na(taxon_id)&(物種學名==name_ck$物種學名[i]),
+     taxon_id:=name_ck$taxon_id[i]]
+}
+ck <- dt[is.na(taxon_id)]
+dt[!is.na(taxon_id),name_code_source:="TaiCol"]
+dt[物種學名=="Meishana"]
+dt_tal <- taicol_tax[
+  dt[!is.na(taxon_id)],on=.(taxon_id)]
+ck <- dt_tal[is.na(name_id)]
+gbif_n <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/110年後報告物種名錄確認_2_修正.xlsx"),sheet=4)%>% as.data.table()
+colnames(gbif_n)
+dt_gbif <- dt[is.na(taxon_id)][gbif_n,on=.(物種學名=verbatimScientificName)]
+dt_100_all <- rbind(dt_tal,dt_gbif,fill=TRUE)
+rm(dt_gbif,dt_tal,dt,gbif_n,dt_110check,ck)
+
+```
+# 6. 資料庫整合
+以昆蟲的資料為標準整理，以鳥類的欄位名稱來做資料庫整合。
+taxon_id要替換成name_id
+
+## 6.1 處理鳥類資料,整備所需的表格
+```{r}
+sta_col <- colnames(inc_db_r)
+colnames(ave_3)
+sta_col
+ave_4 <- ave_3[,.(associatedReferences,year,verbatimEventDate,
+                  phylum,class,classVernacularName,order,
+                  verbatimLongitude,verbatimLatitude,
+                  footprintWKT,footprintSRS,coordinateUncertaintyInMeters,
+                  recordNumber,samplingProtocol,taxonRank,i.family,
+                  originalVernacularName,vernacularName,originalNameUsage,
+                  simple_name,lifeStage,organismQuantity,
+                  organismQuantityType,occurrenceRemarks,name_id,
+                  name_code_source,redlist,iucn,protected)]
+setnames(ave_4,c("i.family","simple_name","name_id",
+                 "name_code_source","redlist","iucn"),
+         c("family","scientificName","nameAccordingToID",
+           "nameAccordingTo","redListStatus","iucnStatus"))
+setnames(ave_4,"protected","protectedStatus")
+### 把囓齒目填好
+
+### 確認其他沒有學名的部分
+ave_4[is.na(scientificName)]
+### 處理taxonRank的問題
+ave_4[is.na(taxonRank)]
+```
+## 6.2 處理昆蟲資料庫
+```{r}
+inc_f <- inc_db_r
+### 先把taicol資料庫拉回來
+inc_f <- taicol_n[usage_status=="accepted"][inc_db_r,on=.(name_id)]
+### 轉換名字
+setnames(inc_f,"V2","調查方法")
+colnames(ave_4)
+inc_f_2 <- inc_f[,c("id","調查年","調查日期","門","class","class_c","目名","X","Y","wkt","座標系統","位置誤差","樣區編號","調查方法","level","科名","物種俗名(原始報告)","common_name_c","物種學名(原始報告)","物種學名","生活史","數量","數量單位","備註","name_id","name_code_source","redlist","iucn","protected")]
+
+setnames(inc_f_2,c("id","調查年","調查日期","門","class","class_c","目名","X","Y","wkt","座標系統","位置誤差","樣區編號","調查方法","level","科名","物種俗名(原始報告)","common_name_c","物種學名(原始報告)","物種學名","生活史","數量","數量單位","備註","name_id","name_code_source","redlist","iucn","protected"),c("associatedReferences","year","verbatimEventDate",
+                  "phylum","class","classVernacularName","order",
+                  "verbatimLongitude","verbatimLatitude",
+                  "footprintWKT","footprintSRS",
+           "coordinateUncertaintyInMeters","recordNumber","samplingProtocol",
+           "taxonRank","family","originalVernacularName","vernacularName",
+           "originalNameUsage","scientificName",
+           "lifeStage","organismQuantity",
+                  "organismQuantityType","occurrenceRemarks","nameAccordingToID","nameAccordingTo","redListStatus","iucnStatus","protectedStatus"))
+write.csv(inc_f_2,paste0(path,"database/occ_InseActeMollAmphRept_20231121.csv"))
+rm(inc_f)
+```
+## 6.3 處理植物資料庫
+以下完全拋棄
+```{r}#####
+colnames(pla_2)
+pla_2[`物種學名(原始報告)`=="Psathyrella candolliana"]
+pla_2[str_detect(note,"gbif")&str_detect(taxon_id,"t"),note:=""]
+## 補上使用GBIF的資料
+gbif_n <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/GBIF_name_list_for_plant.xlsx"),sheet=1)%>% as.data.table()
+test_pla <- pla_2
+for (i in 1:nrow(gbif_n)){
+  test_pla[str_detect(note,"gbif")&(taxon_id==gbif_n$key[i]),
+     c("kingdom","phylum","class","order",
+       "family","genus","simple_name","name_author","分類階層"):=
+  gbif_n[i,.(kingdom,phylum,class,order,
+             family,genus,canonicalName,authorship,rank)]
+       ]
+}
+### 檢查結果
+test_pla[str_detect(note,"gbif")]
+### 整理結果，建立新欄位，將使用GBIF資料補上
+test_pla[str_detect(note,"gbif"),
+         `:=`(name_id=taxon_id,name_code_source="GBIF")]
+### name_code_source補上taicol
+test_pla[is.na(name_code_source),name_code_source:="TaiCol"]
+### 將note整併到備註裡面
+test_pla[備註=="",備註:=NA]
+test_pla[note=="",note:=NA][,note:=gsub("gbif[;]","",note)]
+test_pla[!is.na(note),note:=gsub("gbif",NA,note)]
+test_pla[is.na(備註)&!is.na(note),備註:=note]
+test_pla[,note:=NULL]
+### 處理找不到name_id的東西
+writexl::write_xlsx(unique(test_pla[is.na(name_id),.(taxon_id,`物種俗名(原始報告)`,物種俗名,物種學名)]),paste0(path,"/期末報告/rawdata/名錄整合/植物名錄確認_2.xlsx")) 
+gif_ck <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/植物名錄確認_2_修正.xlsx"))%>%as.data.table()
+### 顯然taicol_taxon的資料更新比較快
+taicol_n_2 <- fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_taxon_20231009.csv"),encoding="UTF-8")
+taicol_n_2[taxon_id==gif_ck$corrected_name[4]]
+ts_pla_1 <- test_pla
+### 先確認查找到的新taxon_id能用
+taicol_n_2[taxon_id %in% gif_ck$corrected_name]
+### 將舊的taxon_id替換成新的
+for (i in 1:nrow(gif_ck)){
+  ts_pla_1[taxon_id==gif_ck$taxon_id[i],taxon_id:=gif_ck$corrected_name[i]]
+}
+###　製作出填入的表格
+pla_tai_sup <- taicol_n_2[ts_pla_1[is.na(name_id),.(taxon_id,record_id)],
+                        on=.(taxon_id)]
+fill_tb <- ts_pla_1[1,1:49]
+fill_tb_2 <- rbind(fill_tb,pla_tai_sup,fill=T)
+fill_tb_2 <- fill_tb_2[-1,][,1:49]
+ts_pla_1[is.na(name_id),1:49:=fill_tb_2]
+ts_pla_1[taxon_id %in% (gif_ck$corrected_name)]
+### 填入物種俗名與學名
+ts_pla_1[common_name_c!="",物種俗名:=common_name_c]
+ts_pla_1[,物種學名:=simple_name]
+### 處理分類位階
+unique(ts_pla_1$分類階層)
+ts_pla_1[is.na(分類階層)&grepl("屬$",common_name_c),分類階層:="genus"]
+ts_pla_1[is.na(分類階層)&grepl("科$",common_name_c),分類階層:="family"]
+ts_pla_1[grepl("門$",common_name_c),分類階層:="phylum"]
+ts_pla_1[分類階層=="genus",c("genus","genus_c"):=.(simple_name,common_name_c)]
+ts_pla_1[分類階層=="family",c("family","family_c"):=.(simple_name,common_name_c)]
+ts_pla_1[分類階層=="phylum",c("phylum","phylum_c"):=.(simple_name,common_name_c)]
+ts_pla_1[分類階層=="屬",分類階層:="genus"][分類階層=="種",分類階層:="species"]
+
+unique(ts_pla_1[分類階層=="genus",common_name_c])
+### 處理兩個弄錯的學名分別是"Eurya spp."與"Alpinia spp."
+ts_pla_1[`物種學名(原始報告)`=="Eurya spp.",
+         1:49:=taicol_n[taxon_id=="t0002693"]]
+ts_pla_1[`物種學名(原始報告)`=="Eurya spp.",]
+ts_pla_1[`物種學名(原始報告)`=="Alpinia spp.",
+         1:49:=taicol_n[taxon_id=="t0023147"]]
+ts_pla_1[`物種學名(原始報告)`=="Alpinia spp.",]
+ts_pla_1[common_name_c=="苔類植物門",`:=`(genus="",genus_c="")]
+### 檢查Family。分類階層是family的taxon_id有問題需要調整。
+ch_data <- ts_pla_1[grepl("Family",`物種學名(原始報告)`)]
+writexl::write_xlsx(unique(ch_data),
+                    paste0(path,"/期末報告/rawdata/名錄整合/植物名錄確認_3.xlsx"))
+gif_ck2 <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/植物名錄確認_3_修正.xlsx"))%>%as.data.table()
+for (i in 1:nrow(gif_ck)){
+  ts_pla_1[`物種學名(原始報告)`==gif_ck2$`物種學名(原始報告)`[i],
+           taxon_id:=gif_ck$correct_id[i]]
+}
+
+fill_tb <- fill_tb[-1]
+fill_tb2 <- rbind(fill_tb,taicol_n_2[ts_pla_1[grepl("Family",`物種學名(原始報告)`),.(taxon_id)],on=.(taxon_id)],fill=TRUE)
+ts_pla_1[grepl("Family",`物種學名(原始報告)`),1:49:=fill_tb2[,1:49]]
+ts_pla_1[grepl("Family",`物種學名(原始報告)`)]
+ts_pla_1[,c("物種俗名","物種學名"):=.(common_name_c,simple_name)]
+ts_pla_1[grepl("org_common_name",備註),物種俗名:=`物種俗名(原始報告)`]
+rm(fill_tb,fill_tb_2,fill_tb2,gif_ck,gif_ck2)
+###其他rank填入species
+ts_pla_1[is.na(分類階層),分類階層:="species"]
+### 處理數量是空值
+ts_pla_1[is.na(數量),數量:=1]
+### 處理名字
+unique(ts_pla_1$分類階層)
+### 物種俗名(原始報告)為紫菊屬的資料有問題，需要調整
+setnames(ts_pla_1,"分類階層","level")
+unique(ts_pla_1$level)
+ts_pla_1[level=="geuns"]
+### 處理原始報告物種俗名有"科"但是沒有物種學名的
+writexl::write_xlsx(unique(ts_pla_1[科名!=family,.(family,taxon_id,`科名(原始報告)`,科名,`物種俗名(原始報告)`,`物種學名(原始報告)`,物種俗名,物種學名,record_id)]),
+                    paste0(path,"/期末報告/rawdata/名錄整合/植物名錄確認_4.xlsx"))
+ts_pla_1[`物種學名(原始報告)`=="Cardamine hirsuta var. formosana"]
+```
+## 6.4 確認植物是否是原始資料庫的問題
+```{r}
+npla <- fread(paste0(path,"database/third_report_Database_coordinate_corrected_20230615.csv"),encoding = "UTF-8")
+taicol_n_2 <- fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_name_20230325.csv"),encoding="UTF-8")
+npla_2 <- taicol_n_2[npla,on=.(taxon_id)]
+
+npla_2[,record_id:=1:.N]
+npla_2[record_id==20475]
+rm(pla_2,ts_pla_1,pla_tai_sup,pla)
+## 重新整併gbif_n的資料
+### 將錯標示為GBIF的taxon_id重新修正
+npla_2[str_detect(note,"gbif")&!is.na(name_id),note:=gsub("gbif","",note)]
+###
+gbif_n <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/GBIF_name_list_for_plant.xlsx"),sheet=1)%>% as.data.table()
+
+npla_3 <- npla_2
+for (i in 1:nrow(gbif_n)){
+  test_pla[str_detect(note,"gbif")&(taxon_id==gbif_n$key[i]),
+     c("kingdom","phylum","class","order",
+       "family","genus","simple_name","name_author","分類階層"):=
+  gbif_n[i,.(kingdom,phylum,class,order,
+             family,genus,canonicalName,authorship,rank)]
+       ]
+}
+### 檢查結果
+npla_3[str_detect(note,"gbif")]
+### 整理結果，建立新欄位，將使用GBIF資料補上
+npla_3[str_detect(note,"gbif"),
+         `:=`(name_id=as.numeric(taxon_id),name_code_source="GBIF")]
+### name_code_source補上taicol
+npla_3[is.na(name_code_source),name_code_source:="TaiCol"]
+### 將note整併到備註裡面
+npla_3[備註=="",備註:=NA]
+npla_3[note=="",note:=NA][,note:=gsub("gbif;","",note)]
+npla_3[!is.na(note),note:=gsub("gbif",NA,note)]
+npla_3[is.na(備註)&!is.na(note),備註:=note]
+npla_3[,note:=NULL]
+npla_3[name_code_source=="GBIF"]
+### 檢查family
+unique(npla_3$分類階層)
+npla_3[分類階層=="Genus"]
+npla_3[is.na(分類階層)&str_detect(`物種俗名(原始報告)`,"科")&is.na(`物種學名(原始報告)`),分類階層:="family"]
+### 處理物種俗名是XX科，但是有物種學名原始報告的情況
+check <- npla_3[str_detect(`物種俗名(原始報告)`,"科")&!is.na(`物種學名(原始報告)`)&!str_detect(`物種學名(原始報告)`,"Family"),49:77]
+writexl::write_xlsx(check, paste0(path,"/期末報告/rawdata/名錄整合/植物名錄確認_5.xlsx"))
+### 改變思維，在限定範圍內做修正
+tai_ck <- read_xlsx(paste0(path,"/期末報告/rawdata/名錄整合/植物名錄確認_5_修正.xlsx")) %>% as.data.table() %>% unique()
+fill_tb <- npla_3[str_detect(`物種俗名(原始報告)`,"科")&!is.na(`物種學名(原始報告)`)&!str_detect(`物種學名(原始報告)`,"Family"),.(`物種學名(原始報告)`,record_id)]
+fill_tb2 <- fill_tb[tai_ck,on=.(`物種學名(原始報告)`=search_term)]
+fill_tb2[duplicated(record_id)]
+fill_tb3 <- taicol_n_2[fill_tb2,on=.(taxon_id)]
+fill_tb3[is.na(name_id)]
+### 因為資料有缺所以再調用新的名錄
+taicol_n_3 <-fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_name_20231009.csv"),encoding="UTF-8") 
+fill_tb3 <- taicol_n_3[usage_status=="accepted"][fill_tb2,on=.(taxon_id)]
+fill_tb3[is.na(name_id)]
+fill_tb3 <- fill_tb3[duplicated(record_id)==FALSE]
+### 重新填入資料
+#### 先刪除掉fill_tb3的namecode
+fill_tb3[,namecode:=NULL]
+####
+npla_4 <- npla_3
+npla_4[record_id %in% fill_tb3$record_id,1:48] <- fill_tb3[,1:48]
+### 重新填入rank(分類階層)"34" "30" "37" "35"
+npla_4[record_id %in% fill_tb3$record_id&rank==34,
+       `:=`(物種俗名=common_name_c,物種學名=simple_name,分類階層="species")]
+npla_4[record_id %in% fill_tb3$record_id&rank==30,
+       `:=`(物種俗名=common_name_c,物種學名=simple_name,分類階層="genus")]
+npla_4[record_id %in% fill_tb3$record_id&rank==37,
+       `:=`(物種俗名=common_name_c,物種學名=simple_name,分類階層="variety")]
+npla_4[record_id %in% fill_tb3$record_id&rank==35,
+       `:=`(物種俗名=common_name_c,物種學名=simple_name,分類階層="subspecies")]
+### 換處理其他問題
+#### 種沒問題
+npla_4[分類階層=="種",分類階層:="species"]
+#### 屬
+npla_4[,分類階層] %>% unique()
+npla_4[分類階層=="Family",分類階層:=rank]
+npla_4[is.na(分類階層),分類階層:=rank]
+npla_4[str_detect(common_name_c,"門")]
+npla_4[,分類階層:=tolower(分類階層)]
+npla_4[,物種學名:=simple_name]
+npla_4 <- npla_4[taxon_id!="delete"]
+npla_f <- npla_4[,c("id","調查年","調查日期","phylum","class","class_c","order","X","Y","wkt","座標系統","位置誤差","樣區編號","調查方法","分類階層","科名","物種俗名(原始報告)","物種俗名","物種學名(原始報告)","物種學名","生活史","數量","數量單位","備註","name_id","name_code_source","redlist","iucn","protected")]
+
+coln <- read_xlsx(paste0(path,"期末報告/rawdata/資料庫合併欄位名稱.xlsx"),sheet=2)
+rm(npla,npla_4,npla_3,tai_ck,fill_tb,fill_tb2,fill_tb3,ch_data,check)
+setnames(npla_f,coln$org,coln$tranf)
+```
+## 6.5 處理110年資料
+整理沒有填入學名的資料，然後有些奇怪的東西要寫在備注
+例如泰雅同庄還有
+```{r}
+taicol_n <-fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_taxon_20231009.csv"),encoding="UTF-8")
+dt_100_all[is.na(物種學名),物種學名:=simple_name]
+dt_100_all[is.na(name_id),]
+dt_100_all[is.na(taxon_id),]
+
+### 填入學名
+dt_100_all[is.na(物種學名),物種學名:=simple_name]
+### 處理name_id
+dt_100_all[is.na(name_id),`:=`(name_id=key,name_code_source="GBIF")]
+dt_100_all[is.na(name_id)]
+### 標示梅山葉蚤屬與泰雅原同椿
+dt_100_all[is.na(name_id),`:=`(備註="資料庫無該學名",name_code_source="none")]
+### 修正欄位名稱
+dt_100_all[!is.na(`物種俗名(原始報告)`),物種俗名:=`物種俗名(原始報告)`]
+dt_100_all[!is.na(`物種俗名(原始報告)`),物種俗名:=`物種俗名(原始報告)`]
+dt_100f <- dt_100_all[,c("id","調查年","調查日期","phylum","class","class_c","order","X","Y","wkt","座標系統","位置誤差","樣區編號","調查方法","分類階層","科名","物種俗名(原始報告)","物種俗名","物種學名(原始報告)","物種學名","生活史","數量","數量單位","備註","name_id","name_code_source","redlist","iucn","protected")]
+setnames(dt_100f,coln$org,coln$tranf)
+```
+# 7. 合併最終的資料庫
+
+```{r}
+rm(name_ck)
+db_all <- rbind(ave_4,inc_f_2,npla_f,dt_100f)
+write.csv(db_all,paste0(path,"/database/database_all_20231122.csv"),fileEncoding = "UTF-8")
+colnames(db_all)
+
+db_all[associatedReferences==9212]
+### 9212 座標完全錯誤
+cor_9212 <- fread(paste0(path,"/wulin/processing/9212_corrected.csv"))
+for (i in 1:8){
+db_all[associatedReferences==9212&recordNumber==i,
+       c("verbatimLongitude","verbatimLatitude"):=
+         c(cor_9212[plot_id==i,.(X,Y)])]
+}
+db_a2 <- db_all
+### 處理wkt為point()
+db_a2[footprintWKT=="POINT( )",footprintWKT:=NA]
+db_a2[footprintWKT=="",footprintWKT:=NA]
+### wkt非)結尾
+wkt_ck <- db_a2[!is.na(footprintWKT)&!grepl(")$",footprintWKT),
+      .(associatedReferences,footprintWKT,recordNumber)] %>% unique()
+write.csv(wkt_ck,paste0(path,"/期末報告/processing/wkt_check.csv"))
+wkt_corr <- fread(paste0(path,"/期末報告/processing/wkt_check_corrected.csv"))
+fill_tb <- db_a2[!is.na(footprintWKT)&!grepl(")$",footprintWKT),
+      .(associatedReferences,footprintWKT,recordNumber)]
+fill_tb[,footprintWKT:=NULL]
+wkt_corr[associatedReferences=="2-Jan",associatedReferences:="8302-1"]
+fill_tb2 <- fill_tb[wkt_corr,on=.(associatedReferences,recordNumber)]
+rm(fill_tb,fill_tb2,wkt_ck)
+### 填入資料
+ db_a2[!is.na(footprintWKT)&!grepl(")$",footprintWKT),
+      footprintWKT:=fill_tb2$footprintWKT]
+db_a3 <- db_a2
+### 處理wkt有Z值
+db_a3[str_detect(footprintWKT,"Z")]
+### 主要是9812的樣區八
+wkt_corr_2<- fread(paste0(path,"/期末報告/processing/9812.csv"))
+db_a3[str_detect(footprintWKT,"Z"),footprintWKT:=wkt_corr_2$wkt[6]]
+### 檢查座標是否有問題
+#### 9006的X與Y在同一個表格內
+colnames(db_a3)
+db_a3[associatedReferences==9006,
+      verbatimLongitude:=sub(",2\\d\\.\\d+","",verbatimLongitude)]
+#### 刪除掉沒有X,Y 與WKT的資料
+db_a4 <- db_a3[!(is.na(footprintWKT)&is.na(verbatimLongitude))]
+#### 檢查X是否為12X開頭
+db_a4[str_detect("^121.",verbatimLongitude),
+      occurrenceRemarks:="座標模糊化"]
+db_a4[,verbatimLongitude:=as.numeric(verbatimLongitude)]
+####處理X資料有問題的
+db_a4[grepl("^2",verbatimLongitude),.(verbatimLongitude,verbatimLatitude)] %>% unique()
+coord_ck <- db_a4[grepl("^2",verbatimLongitude),.(verbatimLongitude,verbatimLatitude)]
+#### 第一筆僅僅只是少了一個位數
+db_a4[verbatimLongitude==coord_ck$verbatimLongitude[1],
+      verbatimLongitude:=verbatimLongitude+100]
+#### 剩下是X,Y互換的問題
+coord_ck <- coord_ck[-1]
+db_a4[grepl("^2",verbatimLongitude),
+      c("verbatimLongitude","verbatimLatitude"):=
+        .(coord_ck$verbatimLatitude,coord_ck$verbatimLongitude)]
+db_a5 <- db_a4
+#### 檢查Y，是否有1開頭的
+db_a5[grepl("^1",verbatimLongitude),]
+db_a5[grepl("POINT()",footprintWKT)]
+#### 檢查EPSG
+wkt_corr_3 <- db_a5[footprintSRS=="EPSG:3826"&!is.na(footprintWKT)] 
+#### 轉座標
+
+wkt_corr_3 <- wkt_corr_3 %>% st_as_sf(.,wkt = "footprintWKT",crs=3826)
+
+wkt_corr_3 <- st_transform(wkt_corr_3, crs = 4326) 
+
+db_a5[footprintSRS=="EPSG:3826"&!is.na(footprintWKT),
+      footprintWKT:=st_as_text(wkt_corr_3$footprintWKT)]
+db_a5[footprintSRS=="EPSG:3826"&!is.na(footprintWKT),.(footprintWKT)]
+db_a5[footprintSRS=="EPSG:3826"&!is.na(footprintWKT),
+      footprintSRS:="EPSG:4326"]
+rm(wkt_corr,wkt_corr_2,wkt_corr_3,cor_9212)
+db_a5[,footprintWKT] %>% unique()
+### 確認wkt是NA的部分
+db_a5[is.na(footprintSRS),.(verbatimLongitude,verbatimLatitude)] %>% unique()
+#### 都是WGS84
+db_a5[is.na(footprintSRS),footprintSRS:="EPSG:4326"]
+write.csv(db_a5,paste0(path,"database/database_all_final_20231122.csv"),
+          fileEncoding = "UTF-8")
+#### 檢查WKT能不能用
+wkt_tb <-unique(db_a5[!is.na(footprintWKT),
+                      .(associatedReferences,footprintWKT)])
+e_r <- NULL
+for (i in 1:nrow(wkt_tb)){
+   r <- try(st_as_sf(wkt_tb[i,],wkt="footprintWKT",crs=4326))
+ if (class(r) == "try-error"){
+   e_r <- c(e_r,i)
+ }
+}
+rm(r,wkt_tb)
+colnames(db_a5)
+
+grid <- st_read(paste0(path,"期末報告/layer/500m網格.gpkg"),crs=4326)
+n_rng <- st_read(paste0(path,"期末報告/layer/雪霸三通範圍.gpkg"),crs=4326) 
+
+#### 找出有問題的wkt
+wkt_test_tb <-unique(db_a5[!is.na(footprintWKT),
+                      .(associatedReferences,footprintWKT)])
+db_a6 <- db_a5[!(associatedReferences==9814&grepl("POLYGON",footprintWKT))]
+rm(db_a2,db_a3,db_a4,db_a5,taicol_n,taicol_n_2,taicol_n_3,taicol_tax)
+### 暫且刪除前面的資料
+db_a6[taxonRank=="",taxonRank:="species"]
+
+write.csv(db_a6[1,],paste0(path,"期末報告/result/欄位名稱範例.csv"))
+#### 檢查資料
+db_a6[classVernacularName=="鳥綱"&class=="Mammalia",classVernacularName:="哺乳綱"]
+
+db_a6[originalVernacularName=="齧蟲目",taxonRank:="order"]
+db_a6[originalVernacularName=="偽蠍",taxonRank:="order"]
+db_a6[grepl("Order",originalNameUsage)&taxonRank!="order",]
+#### 填入學名
+taicol_n <- fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_taxon_20231009.csv"),encoding="UTF-8")
+ch_tb <- db_a6[is.na(family)&taxonRank %in%c("family","genus","species"),.(scientificName,vernacularName,nameAccordingToID,nameAccordingTo)]
+fill_tb <- taicol_n[,.(name_id,simple_name,family,common_name_c)][
+  ch_tb[nameAccordingTo=="TaiCol"],
+  on=.(name_id=nameAccordingToID)]
+db_a6[is.na(family)&taxonRank %in%c("family","genus","species")&
+        nameAccordingTo=="TaiCol",family:=fill_tb$family]
+db_a6[is.na(family)&taxonRank %in%c("family","genus","species")]
+
+db_a6[classVernacularName=="鳥綱"&class!="Aves"]
+db_a6[nameAccordingToID==93552,`:=`(phylum="Chordata",
+                                    class="Aves",
+                                    order="Passeriformes")]
+db_a6[taxonRank=="種",taxonRank:="species"]
+write.csv(db_a6,paste0(path,"database/database_all_final_20231123.csv"),
+          fileEncoding = "UTF-8")
+rm(fill_tb,ch_tb,coln,coord_ck)
+rm(dt_100_all,inc_db,inc_db_r,npla_2,ave_3,db_all)
+### 重作
+db_wkt <- st_as_sf(db_a6[!is.na(footprintWKT)],wkt="footprintWKT",crs=4326)
+db_point <- st_as_sf(db_a6[is.na(footprintWKT)],
+                     coords = c("verbatimLongitude",
+                                "verbatimLatitude"),
+                     crs=4326)
+db_wkt_database <- st_join(grid,db_wkt)
+db_point_database <- st_join(grid,db_point)
+
+st_write(db_wkt_database,"E:/雪霸報告統整/database/database_grid.gpkg",layer="wkt")
+st_write(db_point_database,"E:/雪霸報告統整/database/database_grid.gpkg",layer="point")
+rm(db_wkt_database,db_point_database)
+db_wkt_database_nrng <- st_join(n_rng,db_wkt)
+db_point_database_nrng <- st_join(n_rng,db_point)
+#### 輸出
+st_write(db_wkt_database_nrng,paste0("E:/雪霸報告統整/database/database_range.gpkg"),layer="wkt")
+st_write(db_point_database_nrng,paste0("E:/雪霸報告統整/database/database_range.gpkg"),layer="point")
+rm(db_wkt_database_nrng,db_point_database_nrng)
+st_write(db_wkt,paste0("E:/雪霸報告統整/database/database.gpkg"),layer="wkt")
+st_write(db_point,paste0("E:/雪霸報告統整/database/database.gpkg"),layer="point")
+
+### 計算資料筆數，網格與三通範圍
+#### 網格
+head(db_wkt_database)
+grid_wkt_c <- aggregate(associatedReferences~id,db_wkt_database,length)
+grid_point_c <- aggregate(associatedReferences~id,db_point_database,length)
+grid_obsn <- merge(grid_point_c,grid_wkt_c,by = "id")
+grid_obsn$all_obs <- grid_obsn$associatedReferences.x+
+  grid_obsn$associatedReferences.y
+grid <- merge(grid,grid_obsn[,c("id","all_obs")],by="id")
+rm(grid_obsn,grid_point_c,grid_wkt_c)
+st_write(grid,"E:/雪霸報告統整/期末報告/result/layer/總資料筆數網格圖.gpkg")
+#### 三通
+nrng_wkt_c <- aggregate(associatedReferences~OBJECTID,
+                        db_wkt_database_nrng,length)
+nrng_point_c <- aggregate(associatedReferences~OBJECTID,
+                          db_point_database_nrng,length)
+nrng_obsn <- merge(nrng_point_c,nrng_wkt_c,by = "OBJECTID")
+nrng_obsn$all_obs <- nrng_obsn$associatedReferences.x+
+  nrng_obsn$associatedReferences.y
+
+n_rng<- merge(n_rng,nrng_obsn[,c("OBJECTID","all_obs")],by="OBJECTID")
+st_write(n_rng,"E:/雪霸報告統整/期末報告/result/layer/總資料筆數_三通範圍.gpkg")
+rm(nrng_obsn,nrng_point_c,nrng_wkt_c)
+```
+
+# 8. 統計表
+```{r}
+rm(ave_3,ave_4,coln,coord_ck,db_all,dt_100f,dt_100_all,inc_db,inc_db_r)
+colnames(db_a6)
+
+### 依據研究案號產生資料
+pro_id <- unique(db_a6$associatedReferences)
+lapply(pro_id,function(x){
+  svpath <- paste0("E:/雪霸報告統整/資料庫分類/依據計畫/",x)
+  dir.create(svpath)
+  dt <- db_a6[associatedReferences==x]
+  if (nrow(dt[!is.na(verbatimLongitude)])>0){
+    dt_p <- st_as_sf(dt[!is.na(verbatimLongitude)],
+                     coords = c("verbatimLongitude",
+                                "verbatimLatitude"),
+                     crs=4326)
+    st_write(dt_p,dsn = paste0(svpath,"/",x,".gpkg"),layer = "point")
+  }
+  if (nrow(dt[!is.na(footprintWKT)])>0){
+    dt_wkt <- st_as_sf(dt[!is.na(footprintWKT)],
+                     wkt = "footprintWKT",
+                     crs=4326)
+    st_write(dt_wkt,dsn = paste0(svpath,"/",x,".gpkg"),layer = "wkt")
+  }
+  write.csv(dt,file = paste0(svpath,"/",x,".csv"))
+})
+
+
+
+### 依據分類產生資料
+class_c <- unique(db_a6$classVernacularName)
+class_c <- class_c[!is.na(class_c)]
+class_n <- class_c[!(class_c %in% c("","地位未定"))]
+taicol_n <- fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_name_20231009.csv"),encoding="UTF-8")
+king <-unique(taicol_n[class_c %in% class_n,.(kingdom,kingdom_c,class_c)])
+x <- class_n[1]
+for (i in unique(king$kingdom_c)){
+  dir.create(paste0("E:/雪霸報告統整/資料庫分類/依據分類/",i,"/"))
+}
+lapply(class_n,function(x){
+  king_n <- king[class_c==x,kingdom_c]
+  svpath <- paste0("E:/雪霸報告統整/資料庫分類/依據分類/",king_n,"/",x)
+  dir.create(svpath)
+  dt <- db_a6[classVernacularName==x]
+  if (nrow(dt[!is.na(verbatimLongitude)])>0){
+    dt_p <- st_as_sf(dt[!is.na(verbatimLongitude)],
+                     coords = c("verbatimLongitude",
+                                "verbatimLatitude"),
+                     crs=4326)
+    st_write(dt_p,dsn = paste0(svpath,"/",x,".gpkg"),layer = "point")
+  }
+  if (nrow(dt[!is.na(footprintWKT)])>0){
+    dt_wkt <- st_as_sf(dt[!is.na(footprintWKT)],
+                     wkt = "footprintWKT",
+                     crs=4326)
+    st_write(dt_wkt,dsn = paste0(svpath,"/",x,".gpkg"),
+             layer = "wkt")
+  }
+  write.csv(dt,file = paste0(svpath,"/",x,".csv"))
+})
+
+### 輸出紅皮書物種
+colnames(db_a6)
+db_a6$redListStatus %>% unique()
+redlist <- db_a6[redListStatus %in% c("NVU","NNT","NEN","NCR"),
+                 .(class,classVernacularName,family,scientificName,vernacularName,redListStatus)] %>% unique()
+
+writexl::write_xlsx(redlist,paste0(path,"/期末報告/result/紅皮書物種名錄.xlsx"))
+```
+

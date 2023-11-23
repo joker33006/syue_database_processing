@@ -1,0 +1,140 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# 0. package and path
+
+```{r}
+library(data.table)
+library(sf)
+library(readr)
+library(stringr)
+library(readxl)
+path <- "H:/我的雲端硬碟/研究室計畫/2022/雪霸報告/"
+```
+
+```{r}
+### 重新讀入資料庫
+db_a7 <- fread(paste0(path,"database/database_all_final_20231123.csv"),encoding = "UTF-8")
+
+rm(ck)
+grid <- st_read(paste0(path,"期末報告/layer/500m網格.gpkg"),crs=4326)
+n_rng <- st_read(paste0(path,"期末報告/layer/雪霸三通範圍.gpkg"),crs=4326) 
+taicol_n <- fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_taxon_20231009.csv"),encoding="UTF-8")
+db_wkt <- st_as_sf(db_a6[!is.na(footprintWKT)],wkt="footprintWKT",crs=4326)
+db_point <- st_as_sf(db_a6[is.na(footprintWKT)],
+                     coords = c("verbatimLongitude",
+                                "verbatimLatitude"),
+                     crs=4326)
+db_wkt_database <- st_join(grid,db_wkt)
+db_point_database <- st_join(grid,db_point)
+
+st_write(db_wkt_database,"E:/雪霸報告統整/database/database_grid.gpkg",layer="wkt")
+st_write(db_point_database,"E:/雪霸報告統整/database/database_grid.gpkg",layer="point")
+rm(db_wkt_database,db_point_database)
+db_wkt_database_nrng <- st_join(n_rng,db_wkt)
+db_point_database_nrng <- st_join(n_rng,db_point)
+#### 輸出
+st_write(db_wkt_database_nrng,paste0("E:/雪霸報告統整/database/database_range.gpkg"),layer="wkt")
+st_write(db_point_database_nrng,paste0("E:/雪霸報告統整/database/database_range.gpkg"),layer="point")
+rm(db_wkt_database_nrng,db_point_database_nrng)
+st_write(db_wkt,paste0("E:/雪霸報告統整/database/database.gpkg"),layer="wkt")
+st_write(db_point,paste0("E:/雪霸報告統整/database/database.gpkg"),layer="point")
+
+### 計算資料筆數，網格與三通範圍
+#### 網格
+head(db_wkt_database)
+grid_wkt_c <- aggregate(associatedReferences~id,db_wkt_database,length)
+grid_point_c <- aggregate(associatedReferences~id,db_point_database,length)
+grid_obsn <- merge(grid_point_c,grid_wkt_c,by = "id")
+grid_obsn$all_obs <- grid_obsn$associatedReferences.x+
+  grid_obsn$associatedReferences.y
+grid <- merge(grid,grid_obsn[,c("id","all_obs")],by="id")
+rm(grid_obsn,grid_point_c,grid_wkt_c)
+st_write(grid,"E:/雪霸報告統整/期末報告/result/layer/總資料筆數網格圖.gpkg")
+#### 三通
+nrng_wkt_c <- aggregate(associatedReferences~OBJECTID,
+                        db_wkt_database_nrng,length)
+nrng_point_c <- aggregate(associatedReferences~OBJECTID,
+                          db_point_database_nrng,length)
+nrng_obsn <- merge(nrng_point_c,nrng_wkt_c,by = "OBJECTID")
+nrng_obsn$all_obs <- nrng_obsn$associatedReferences.x+
+  nrng_obsn$associatedReferences.y
+
+n_rng<- merge(n_rng,nrng_obsn[,c("OBJECTID","all_obs")],by="OBJECTID")
+st_write(n_rng,"E:/雪霸報告統整/期末報告/result/layer/總資料筆數_三通範圍.gpkg")
+rm(nrng_obsn,nrng_point_c,nrng_wkt_c)
+```
+
+# 8. 統計表
+```{r}
+rm(ave_3,ave_4,coln,coord_ck,db_all,dt_100f,dt_100_all,inc_db,inc_db_r)
+colnames(db_a6)
+
+### 依據研究案號產生資料
+pro_id <- unique(db_a6$associatedReferences)
+lapply(pro_id,function(x){
+  svpath <- paste0("E:/雪霸報告統整/資料庫分類/依據計畫/",x)
+  dir.create(svpath)
+  dt <- db_a6[associatedReferences==x]
+  if (nrow(dt[!is.na(verbatimLongitude)])>0){
+    dt_p <- st_as_sf(dt[!is.na(verbatimLongitude)],
+                     coords = c("verbatimLongitude",
+                                "verbatimLatitude"),
+                     crs=4326)
+    st_write(dt_p,dsn = paste0(svpath,"/",x,".gpkg"),layer = "point")
+  }
+  if (nrow(dt[!is.na(footprintWKT)])>0){
+    dt_wkt <- st_as_sf(dt[!is.na(footprintWKT)],
+                     wkt = "footprintWKT",
+                     crs=4326)
+    st_write(dt_wkt,dsn = paste0(svpath,"/",x,".gpkg"),layer = "wkt")
+  }
+  write.csv(dt,file = paste0(svpath,"/",x,".csv"))
+})
+
+
+
+### 依據分類產生資料
+class_c <- unique(db_a6$classVernacularName)
+class_c <- class_c[!is.na(class_c)]
+class_n <- class_c[!(class_c %in% c("","地位未定"))]
+taicol_n <- fread(paste0(path,"/期末報告/rawdata/名錄整合/TaiCol/TaiCOL_name_20231009.csv"),encoding="UTF-8")
+king <-unique(taicol_n[class_c %in% class_n,.(kingdom,kingdom_c,class_c)])
+x <- class_n[1]
+for (i in unique(king$kingdom_c)){
+  dir.create(paste0("E:/雪霸報告統整/資料庫分類/依據分類/",i,"/"))
+}
+lapply(class_n,function(x){
+  king_n <- king[class_c==x,kingdom_c]
+  svpath <- paste0("E:/雪霸報告統整/資料庫分類/依據分類/",king_n,"/",x)
+  dir.create(svpath)
+  dt <- db_a6[classVernacularName==x]
+  if (nrow(dt[!is.na(verbatimLongitude)])>0){
+    dt_p <- st_as_sf(dt[!is.na(verbatimLongitude)],
+                     coords = c("verbatimLongitude",
+                                "verbatimLatitude"),
+                     crs=4326)
+    st_write(dt_p,dsn = paste0(svpath,"/",x,".gpkg"),layer = "point")
+  }
+  if (nrow(dt[!is.na(footprintWKT)])>0){
+    dt_wkt <- st_as_sf(dt[!is.na(footprintWKT)],
+                     wkt = "footprintWKT",
+                     crs=4326)
+    st_write(dt_wkt,dsn = paste0(svpath,"/",x,".gpkg"),
+             layer = "wkt")
+  }
+  write.csv(dt,file = paste0(svpath,"/",x,".csv"))
+})
+
+### 輸出紅皮書物種
+colnames(db_a6)
+db_a6$redListStatus %>% unique()
+redlist <- db_a6[redListStatus %in% c("NVU","NNT","NEN","NCR"),
+                 .(class,classVernacularName,family,scientificName,vernacularName,redListStatus)] %>% unique()
+
+writexl::write_xlsx(redlist,paste0(path,"/期末報告/result/紅皮書物種名錄.xlsx"))
+```
+
+
